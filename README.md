@@ -43,11 +43,6 @@ A more detailed diagram illustrating this process can be found in our
 documentation: [How It
 Works](https://dranet.sigs.k8s.io/docs/concepts/howitworks/).
 
-> [!IMPORTANT]
-> DRANET runs as a DaemonSet, and its Pods run with `privileged=true`.
-> Therefore, DRANET can affect your node configuration.
-> For example, DRANET may overwrite your container runtime configuration to enable NRI via an init container.
-
 ## Quick Start
 
 To get started with DRANET, your Kubernetes cluster needs to have [Dynamic
