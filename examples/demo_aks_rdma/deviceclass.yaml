@@ -1,0 +1,14 @@
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: azure-rdma
+spec:
+  selectors:
+    - cel:
+        expression: device.driver == "dra.net"
+    - cel:
+        expression: device.attributes["dra.net"].rdma == true
+    - cel:
+        expression: device.attributes["azure.dra.net"].infinibandSupport != "None"
+---

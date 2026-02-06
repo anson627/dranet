@@ -1,0 +1,61 @@
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: rdma-net-template
+spec:
+  spec:
+    devices:
+      requests:
+      - name: rdma-net-interface
+        deviceClassName: azure-rdma
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rdma-perftest
+spec:
+  selector:
+    name: rdma-perftest
+  clusterIP: None
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rdma-perftest
+  labels:
+    name: rdma-perftest
+spec:
+  replicas: 2
+  serviceName: rdma-perftest
+  selector:
+    matchLabels:
+      name: rdma-perftest
+  template:
+    metadata:
+      labels:
+        name: rdma-perftest
+    spec:
+      nodeSelector:
+        dra.net/acceleratorpod: "true"
+      containers:
+      - image: registry.k8s.io/networking/dranet-rdma-perftest:stable
+        name: dranet-rdma-perftest
+        securityContext:
+          capabilities:
+            add: [ "IPC_LOCK" ]
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        command: ["sleep", "infinity"]
+      resourceClaims:
+      - name: rdma-net-interface
+        resourceClaimTemplateName: rdma-net-template
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                name: rdma-perftest
+            topologyKey: kubernetes.io/hostname
+---

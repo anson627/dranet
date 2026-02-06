@@ -25,6 +25,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/google/dranet/pkg/cloudprovider"
+	"github.com/google/dranet/pkg/cloudprovider/azure"
 	"github.com/google/dranet/pkg/cloudprovider/gce"
 	resourceapi "k8s.io/api/resource/v1"
 )
@@ -39,6 +40,11 @@ func getInstanceProperties(ctx context.Context) *cloudprovider.CloudInstance {
 		// https://cloud.google.com/compute/docs/metadata/predefined-metadata-keys
 		klog.Infof("running on GCE")
 		instance, err = gce.GetInstance(ctx)
+	} else if azure.IsOnAzure() {
+		// Get Azure instance metadata for network interfaces
+		// https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+		klog.Infof("running on Azure")
+		instance, err = azure.GetInstance(ctx)
 	}
 	if err != nil {
 		klog.Infof("could not get instance properties: %v", err)
@@ -56,6 +62,8 @@ func getProviderAttributes(mac string, instance *cloudprovider.CloudInstance) ma
 	switch instance.Provider {
 	case cloudprovider.CloudProviderGCE:
 		return gce.GetGCEAttributes(mac, instance)
+	case cloudprovider.CloudProviderAzure:
+		return azure.GetAzureAttributes(mac, instance)
 	default:
 		klog.Warningf("cloud provider %q is not supported", instance.Provider)
 	}

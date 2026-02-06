@@ -24,6 +24,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/google/dranet/pkg/dranetctl/aks"
 	"github.com/google/dranet/pkg/dranetctl/gke"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -66,4 +67,6 @@ func init() {
 	// TODO(aojea) add other cloud providers
 	// GKE subcommand
 	rootCmd.AddCommand(gke.GkeCmd)
+	// AKS subcommand
+	rootCmd.AddCommand(aks.AksCmd)
 }
