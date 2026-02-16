@@ -214,3 +214,54 @@ func pciAddressForNetInterface(ifName string) (*pciAddress, error) {
 	}
 	return address, nil
 }
+
+const (
+	// sysBusPCIDevices is the sysfs path containing symlinks to all PCI devices.
+	sysBusPCIDevices = "/sys/bus/pci/devices"
+)
+
+// getParentBridgeBusID returns the PCI address of the parent bridge (PCIe switch)
+// for a given PCI device address. This is used to determine which devices share
+// the same PCIe switch, enabling 1:1 GPU-NIC pairing for optimal NCCL performance.
+//
+// The function works by:
+// 1. Reading the sysfs symlink for the device: /sys/bus/pci/devices/{pci_address}
+// 2. Resolving the real path, which looks like:
+//   - Standard PCI: /sys/devices/pci0000:00/.../parent_addr/device_addr
+//   - Azure VMBUS: /sys/devices/LNXSYSTM:00/.../VMBUS:00/guid/pci*/parent_addr/device_addr
+//
+// 3. Traversing up to find the parent directory that is also a valid PCI address
+//
+// Returns empty string if the parent bridge cannot be determined.
+func getParentBridgeBusID(pciAddr string) string {
+	return getParentBridgeBusIDWithPath(pciAddr, sysBusPCIDevices)
+}
+
+// getParentBridgeBusIDWithPath is the internal implementation that allows
+// customizing the sysfs path for testing.
+func getParentBridgeBusIDWithPath(pciAddr string, sysfsBasePath string) string {
+	deviceSymlink := filepath.Join(sysfsBasePath, pciAddr)
+
+	// Read the symlink to get the real device path
+	realPath, err := filepath.EvalSymlinks(deviceSymlink)
+	if err != nil {
+		klog.V(4).Infof("Could not resolve sysfs symlink for %s: %v", pciAddr, err)
+		return ""
+	}
+
+	// The realPath looks like:
+	// /sys/devices/.../parent_pci_addr/device_pci_addr
+	// We need to get the parent directory and check if it's a valid PCI address
+	parentDir := filepath.Dir(realPath)
+	parentName := filepath.Base(parentDir)
+
+	// Try to parse the parent directory name as a PCI address
+	parentPCIAddr, err := parsePCIAddress(parentName)
+	if err != nil {
+		klog.V(4).Infof("Parent directory %q is not a valid PCI address: %v", parentName, err)
+		return ""
+	}
+
+	klog.V(4).Infof("Found parent bridge %s for device %s", parentPCIAddr.String(), pciAddr)
+	return parentPCIAddr.String()
+}

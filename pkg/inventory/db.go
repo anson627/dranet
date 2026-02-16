@@ -248,15 +248,34 @@ func (db *DB) discoverPCIDevices() []resourceapi.Device {
 			device.Attributes[apis.AttrNUMANode] = resourceapi.DeviceAttribute{IntValue: ptr.To(int64(pciDev.Node.ID))}
 		}
 
-		pcieRootAttr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(pciDev.Address)
-		if err != nil {
-			klog.Infof("Could not get pci root attribute: %v", err)
-		} else {
-			device.Attributes[pcieRootAttr.Name] = pcieRootAttr.Value
-		}
+		setPCIeRootAttribute(&device, pciDev.Address)
 		devices = append(devices, device)
 	}
 	return devices
+}
+
+// setPCIeRootAttribute sets the PCIe root attribute on a device. It first tries
+// standard PCIe root resolution via sysfs. If that fails (e.g., on Azure VMBUS
+// paths), it falls back to using the parent bridge bus ID (PCIe switch address)
+// which enables 1:1 GPU-NIC pairing for optimal NCCL performance.
+func setPCIeRootAttribute(device *resourceapi.Device, pciAddress string) {
+	pcieRootAttr, err := deviceattribute.GetPCIeRootAttributeByPCIBusID(pciAddress)
+	if err != nil {
+		klog.V(4).Infof("Standard pcieRoot resolution failed for %s: %v", pciAddress, err)
+
+		// Fallback: Try to get the parent bridge bus ID (PCIe switch address).
+		// This enables 1:1 GPU-NIC pairing when both are connected to the same
+		// PCIe switch, which is critical for optimal NCCL performance on Azure.
+		parentBridge := getParentBridgeBusID(pciAddress)
+		if parentBridge != "" {
+			device.Attributes[deviceattribute.StandardDeviceAttributePCIeRoot] = resourceapi.DeviceAttribute{
+				StringValue: &parentBridge,
+			}
+			klog.V(4).Infof("Using parent bridge pcieRoot for %s: %s", pciAddress, parentBridge)
+		}
+	} else {
+		device.Attributes[pcieRootAttr.Name] = pcieRootAttr.Value
+	}
 }
 
 // discoveryNetworkInterfaces updates the devices based on information retried
