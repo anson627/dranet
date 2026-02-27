@@ -153,6 +153,21 @@ func (np *NetworkDriver) runPodSandbox(_ context.Context, pod *api.PodSandbox, p
 			WithDriver(np.driverName).
 			WithPool(np.nodeName)
 
+		// IB-only path: no netdev to move into the pod namespace.
+		// RDMA char devices are injected via CreateContainer.
+		if config.IBOnly {
+			klog.V(2).Infof("RunPodSandbox IB-only device %s: skipping netdev attach", deviceName)
+			resourceClaimStatusDevice.WithConditions(
+				metav1apply.Condition().
+					WithType("Ready").
+					WithReason("IBOnlyDeviceReady").
+					WithStatus(metav1.ConditionTrue).
+					WithLastTransitionTime(metav1.Now()),
+			)
+			resourceClaimStatus.WithDevices(resourceClaimStatusDevice)
+			continue
+		}
+
 		ifName := config.NetworkInterfaceConfigInHost.Interface.Name
 
 		klog.V(2).Infof("RunPodSandbox processing Network device: %s", ifName)
@@ -310,6 +325,10 @@ func (np *NetworkDriver) stopPodSandbox(_ context.Context, pod *api.PodSandbox, 
 		}
 	}
 	for deviceName, config := range podConfig {
+		// IB-only devices have no netdev in the namespace — nothing to detach.
+		if config.IBOnly {
+			continue
+		}
 		if err := nsDetachNetdev(ns, config.NetworkInterfaceConfigInPod.Interface.Name, config.NetworkInterfaceConfigInHost.Interface.Name); err != nil {
 			klog.Infof("fail to return network device %s : %v", deviceName, err)
 		}

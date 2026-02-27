@@ -27,6 +27,11 @@ import (
 // network device allocated to a Pod. This includes network interface settings,
 // routes for the Pod's network namespace, and RDMA configurations.
 type PodConfig struct {
+	// IBOnly is true for InfiniBand-only devices that have no netdev interface.
+	// When set, the netdev attach/detach steps are skipped and only RDMA
+	// character devices are injected into the container.
+	IBOnly bool
+
 	Claim types.NamespacedName
 
 	// NetworkInterfaceConfigInHost is the config of the network interface as

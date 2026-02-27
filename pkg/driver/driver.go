@@ -61,6 +61,8 @@ type inventoryDB interface {
 	Run(context.Context) error
 	GetResources(context.Context) <-chan []resourceapi.Device
 	GetNetInterfaceName(string) (string, error)
+	IsIBOnlyDevice(deviceName string) bool
+	GetRDMADeviceName(deviceName string) (string, error)
 	AddPodNetNs(podKey string, netNs string)
 	RemovePodNetNs(podKey string)
 	GetPodNetNs(podKey string) (netNs string)
