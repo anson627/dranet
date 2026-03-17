@@ -88,22 +88,27 @@ func (a *AzureInstance) GetDeviceConfig(id cloudprovider.DeviceIdentifiers) *api
 }
 
 // OnAzure returns true if the code is running on an Azure VM by probing the
-// IMDS endpoint. This is a lightweight check that does not parse the full
-// response.
-func OnAzure() bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequest("GET", imdsEndpoint+"?api-version="+imdsAPIVersion+"&format=text", nil)
-	if err != nil {
-		return false
-	}
-	req.Header.Set("Metadata", "true")
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	// IMDS returns 200 on Azure VMs. Any successful response indicates Azure.
-	return resp.StatusCode == http.StatusOK
+// IMDS endpoint. It uses a context and active polling to avoid flaky behavior
+// in corner cases such as slow network initialization.
+func OnAzure(ctx context.Context) bool {
+	client := &http.Client{}
+
+	err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 5*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", imdsEndpoint+"?api-version="+imdsAPIVersion+"&format=text", nil)
+		if err != nil {
+			return false, nil
+		}
+		req.Header.Set("Metadata", "true")
+		resp, err := client.Do(req)
+		if err != nil {
+			return false, nil
+		}
+		defer resp.Body.Close()
+		// IMDS returns 200 on Azure VMs. Any successful response indicates Azure.
+		return resp.StatusCode == http.StatusOK, nil
+	})
+
+	return err == nil
 }
 
 // GetInstance retrieves Azure instance properties by querying IMDS.
