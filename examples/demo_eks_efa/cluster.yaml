@@ -1,0 +1,48 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: dranet-efa-demo
+  region: us-west-2
+  version: "1.34"
+
+iam:
+  withOIDC: true
+
+availabilityZones:
+  - us-west-2a
+  - us-west-2b
+
+managedNodeGroups:
+  # System node group for cluster services (CoreDNS, kube-proxy, etc.)
+  - name: system
+    instanceType: m5.xlarge
+    desiredCapacity: 2
+    labels:
+      role: system
+
+  # GPU + EFA node group with p4d.24xlarge (fixed size)
+  - name: gpu-efa
+    instanceType: p4d.24xlarge
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 2
+    labels:
+      role: gpu-efa
+    # Enable EFA on this node group
+    efaEnabled: true
+    # Place instances close together for optimal EFA bandwidth
+    placement:
+      groupName: dranet-efa-demo-pg
+    # EKS-optimized AL2023 GPU AMI includes EFA drivers and NVIDIA drivers
+    amiFamily: AmazonLinux2023
+    # p4d.24xlarge has 4 EFA interfaces
+    # Network card 0 = primary ENI (not EFA), cards 1-3 = EFA
+    privateNetworking: true
+    ssh:
+      allow: false
+    volumeSize: 500
+    volumeType: gp3
+    taints:
+      - key: nvidia.com/gpu
+        effect: NoSchedule
