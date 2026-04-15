@@ -1,0 +1,118 @@
+# NCCL-like collective communication test using Neuron DRA + DraNet EFA
+# with topology-aware scheduling via resource.aws.com/devicegroup*_id.
+#
+# This MPIJob runs nccom-test (Neuron collective communication benchmark)
+# across 2 trn1.32xlarge nodes, requesting 16 Neuron devices + 8 EFA
+# interfaces per worker, co-located via devicegroup16_id.
+#
+# Prerequisites:
+#   - MPI Operator: kubectl apply --server-side -f https://github.com/kubeflow/mpi-operator/raw/refs/heads/master/deploy/v2beta1/mpi-operator.yaml
+#   - Neuron DRA driver: helm upgrade --install neuron-helm-chart oci://public.ecr.aws/neuron/neuron-helm-chart --set "devicePlugin.enabled=false" --set "npd.enabled=false" --set "draDriver.enabled=true"
+#   - DraNet: kubectl apply -f install.yaml
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: efa-rdma
+spec:
+  selectors:
+  - cel:
+      expression: >-
+        device.driver == "dra.net" &&
+        device.attributes["dra.net"].rdma == true &&
+        device.attributes["dra.net"].pciVendor == "Amazon.com, Inc."
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: neuron-efa-16x8
+spec:
+  spec:
+    devices:
+      requests:
+      - name: neuron-devices
+        exactly:
+          deviceClassName: neuron.aws.com
+          count: 16
+      - name: efa-devices
+        exactly:
+          deviceClassName: efa-rdma
+          count: 8
+      constraints:
+      - requests: ["neuron-devices", "efa-devices"]
+        matchAttribute: resource.aws.com/devicegroup16_id
+---
+apiVersion: kubeflow.org/v2beta1
+kind: MPIJob
+metadata:
+  name: nccom-test
+spec:
+  slotsPerWorker: 32
+  runPolicy:
+    cleanPodPolicy: Running
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+        spec:
+          tolerations:
+          - key: aws.amazon.com/neuron
+            operator: Exists
+            effect: NoSchedule
+          containers:
+          - name: launcher
+            image: 763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training-neuronx:2.9.0-neuronx-py312-sdk2.29.0-ubuntu24.04
+            command:
+            - /bin/bash
+            - -c
+            - |
+              sleep 15
+
+              echo "=== Neuron Collective Communication Test ==="
+              echo "Nodes: 2x trn1.32xlarge"
+              echo "NeuronCores per node: 32 (16 devices x 2 cores)"
+              echo "EFA interfaces per node: 8"
+              echo ""
+
+              mpirun \
+                --allow-run-as-root \
+                -np 2 \
+                -N 1 \
+                --bind-to none \
+                -x PATH \
+                -x LD_LIBRARY_PATH \
+                -x FI_EFA_USE_DEVICE_RDMA=1 \
+                -x FI_PROVIDER=efa \
+                -x NEURON_RT_NUM_CORES=32 \
+                nccom-test all_reduce \
+                  --ndevices 16 \
+                  --minbytes 8 \
+                  --maxbytes 2G \
+                  --stepfactor 2 \
+                  --iters 20 \
+                  --warmup_iters 5
+
+              echo ""
+              echo "=== Test Complete ==="
+    Worker:
+      replicas: 2
+      template:
+        spec:
+          tolerations:
+          - key: aws.amazon.com/neuron
+            operator: Exists
+            effect: NoSchedule
+          resourceClaims:
+          - name: neuron-efa
+            resourceClaimTemplateName: neuron-efa-16x8
+          containers:
+          - name: worker
+            image: 763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training-neuronx:2.9.0-neuronx-py312-sdk2.29.0-ubuntu24.04
+            env:
+            - name: FI_EFA_USE_DEVICE_RDMA
+              value: "1"
+            - name: FI_PROVIDER
+              value: "efa"
+            resources:
+              claims:
+              - name: neuron-efa

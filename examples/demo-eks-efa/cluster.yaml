@@ -1,0 +1,26 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: dranet-efa-demo
+  region: us-east-1
+  version: "1.34"
+
+iam:
+  withOIDC: true
+
+availabilityZones:
+  - us-east-1a
+  - us-east-1b
+
+managedNodeGroups:
+  # System node group for cluster services (CoreDNS, kube-proxy, etc.)
+  - name: system
+    instanceType: m5.xlarge
+    desiredCapacity: 2
+    labels:
+      role: system
+
+  # The neuron-efa node group (trn1.32xlarge with Capacity Block + EFA)
+  # is created by setup.sh via the EKS API to work around an eksctl bug
+  # where capacityReservationId is not passed through to the launch template.

@@ -30,13 +30,13 @@ AWS Elastic Fabric Adapter (EFA) is a network interface for EC2 instances that p
 ### Current State in DraNet
 
 DraNet already has strong foundations that EFA support can build on:
-- **PCI device discovery** (`pkg/inventory/db.go:255-299`) — EFA devices will already be discovered as PCI network class devices
-- **RDMA device discovery** (`pkg/inventory/db.go:448-474`) — EFA RDMA devices are discoverable via `rdmamap`
+- **PCI device discovery** (`pkg/inventory/db.go`) — EFA devices are discovered as PCI network class devices
+- **RDMA device discovery** (`pkg/inventory/db.go`) — EFA RDMA devices are discoverable via `rdmamap`
 - **RDMA device attachment** (`pkg/driver/rdmadevice.go`) — moving RDMA links to pod namespaces and injecting char devices
 - **Cloud provider plugin pattern** (`pkg/cloudprovider/`) — GCE, Azure, OKE implementations to follow
 - **Host device movement** (`pkg/driver/hostdevice.go`) — moving network interfaces into pod namespaces
 
-What's missing is the **AWS cloud provider plugin** to enrich devices with AWS-specific metadata, **EFA-specific device identification** attributes, and **example manifests** for EKS users.
+What's missing is **EFA-specific device identification** attributes, **full AWS metadata enrichment** (AZ, placement group, per-ENI metadata), and **workload scheduling example manifests** (DeviceClass, ResourceClaimTemplate).
 
 ### Current EFA Kubernetes Device Plugin Limitations
 
@@ -51,129 +51,88 @@ DraNet with DRA solves all of these by exposing rich per-device attributes.
 
 ## Detailed Design
 
-### Phase 1: AWS Cloud Provider Plugin
+### Phase 1: AWS Cloud Provider Plugin [IMPLEMENTED]
 
-Create `pkg/cloudprovider/aws/aws.go` following the established pattern (GCE, Azure, OKE).
+Created `pkg/cloudprovider/aws/aws.go` following the established pattern (GCE, Azure, OKE).
 
 #### 1.1 AWS Instance Metadata Service (IMDS) Integration
 
-Query EC2 IMDS v2 (`http://169.254.169.254/latest/`) with IMDSv2 token-based authentication:
+Uses the AWS SDK v2 IMDS client (`github.com/aws/aws-sdk-go-v2/feature/ec2/imds`) with automatic IMDSv2 token handling, rather than raw HTTP requests. The client is configured with:
+- HTTP timeout: 10 seconds
+- Max retries: 10 (with SDK exponential backoff)
+- Cached singleton client to avoid repeated initialization
 
-```
-PUT /latest/api/token (TTL header) -> session token
-GET /latest/meta-data/instance-type -> "p5.48xlarge"
-GET /latest/meta-data/placement/availability-zone -> "us-west-2a"
-GET /latest/meta-data/placement/group-name -> "my-placement-group"
-GET /latest/meta-data/network/interfaces/macs/ -> list of MACs
-GET /latest/meta-data/network/interfaces/macs/{mac}/device-number -> "0", "1", ...
-GET /latest/meta-data/network/interfaces/macs/{mac}/interface-id -> "eni-xxx"
-GET /latest/meta-data/network/interfaces/macs/{mac}/subnet-id -> "subnet-xxx"
-GET /latest/meta-data/network/interfaces/macs/{mac}/vpc-id -> "vpc-xxx"
-GET /latest/meta-data/network/interfaces/macs/{mac}/local-ipv4s -> "10.0.1.5"
-```
+The primary metadata endpoint used is `GetInstanceIdentityDocument`, which returns instance type, region, and other identity data in a single call.
 
 #### 1.2 Cloud Provider Detection
 
 ```go
 // pkg/cloudprovider/aws/aws.go
 func OnAWS(ctx context.Context) bool {
-    // Probe IMDS v2 token endpoint with short timeout
-    // PUT http://169.254.169.254/latest/api/token
-    // with X-aws-ec2-metadata-token-ttl-seconds: 5
+    // Probes IMDS via GetInstanceIdentityDocument with a 5-second timeout.
+    // Uses the AWS SDK v2 IMDS client which handles IMDSv2 token flow automatically.
 }
 ```
 
-#### 1.3 AWS-Specific Attributes
+#### 1.3 Neuron Instance Detection and EFA Device Group Mapping
 
-| Attribute | Type | Source | Description |
-|-----------|------|--------|-------------|
-| `aws.dra.net/instanceType` | string | IMDS | EC2 instance type (e.g., `p5.48xlarge`) |
-| `aws.dra.net/availabilityZone` | string | IMDS | AZ for topology-aware scheduling |
-| `aws.dra.net/placementGroup` | string | IMDS | Cluster placement group name |
-| `aws.dra.net/eniId` | string | IMDS per-MAC | ENI ID for the interface |
-| `aws.dra.net/subnetId` | string | IMDS per-MAC | Subnet the interface belongs to |
-| `aws.dra.net/vpcId` | string | IMDS per-MAC | VPC ID |
-| `aws.dra.net/deviceNumber` | int | IMDS per-MAC | Network interface device index |
+The implementation focuses on **AWS Neuron instances** (Trainium/Inferentia) as the initial use case. For Neuron instances, EFA devices are enriched with device group attributes using the `aws-neuron/connected-device-maps-over-efa-for-neuron` library:
+
+```go
+func isNeuronInstance(instanceType string) bool {
+    // Returns true for trn* and inf* instance type prefixes
+}
+
+var isEFADevice = func(pciAddress string) bool {
+    // Checks /sys/bus/pci/devices/{pciAddress}/driver symlink -> "efa"
+}
+```
+
+For Neuron instances with EFA-bound PCI devices, `GetDeviceAttributes` returns device group IDs from the Neuron EFA lookup library. These attributes enable topology-aware scheduling of Neuron accelerators connected over EFA.
+
+For non-Neuron instances (e.g., `p4d.24xlarge`, `p5.48xlarge`), EFA devices are still fully discovered through DraNet's existing PCI and RDMA device discovery — they appear with `dra.net/rdma: true`, PCI vendor/device info, and NUMA topology. The cloud provider plugin returns no additional attributes for these instances in the current implementation.
 
 #### 1.4 Implementation Structure
 
 ```go
 type AWSInstance struct {
     InstanceType     string
-    AvailabilityZone string
-    PlacementGroup   string
-    Interfaces       map[string]awsNetworkInterface // keyed by MAC
-}
-
-type awsNetworkInterface struct {
-    MAC          string
-    DeviceNumber int
-    InterfaceID  string
-    SubnetID     string
-    VPCID        string
-    LocalIPv4s   []string
+    IsNeuronInstance bool
 }
 ```
 
-The `GetDeviceAttributes(id DeviceIdentifiers)` method matches devices by MAC address to correlate local PCI/network devices with IMDS metadata.
+`GetDeviceAttributes(id DeviceIdentifiers)` — For Neuron instances, checks if the device's PCI address is bound to the EFA driver, then returns device group attributes from the Neuron lookup library. Returns empty attributes for non-Neuron instances.
 
-`GetDeviceConfig(id DeviceIdentifiers)` returns `nil` initially (EFA devices get their IP config from the host, similar to Azure/OKE).
+`GetDeviceConfig(id DeviceIdentifiers)` returns `nil` (EFA devices get their IP config from the host, similar to Azure/OKE).
 
-#### 1.5 Files to Create/Modify
+#### 1.5 Files Created/Modified
 
 | File | Action | Description |
 |------|--------|-------------|
-| `pkg/cloudprovider/aws/aws.go` | **Create** | AWS cloud provider implementation |
-| `pkg/cloudprovider/aws/aws_test.go` | **Create** | Unit tests with mock IMDS server |
-| `pkg/inventory/cloud.go` | **Modify** | Add `CloudProviderHintAWS`, wire up detection and instance retrieval |
-| `pkg/inventory/db.go` | **Modify** | Add `CloudProviderHintAWS` to validation in `WithCloudProviderHint` |
-| `cmd/dranet/app.go` | **Modify** | Update `--cloud-provider-hint` help text to include `AWS` |
+| `pkg/cloudprovider/aws/aws.go` | **Created** | AWS cloud provider with IMDS detection, Neuron instance identification, and EFA device group attribute enrichment |
+| `pkg/cloudprovider/aws/aws_test.go` | **Created** | Comprehensive unit tests (13 test functions) with mock IMDS server, timeout tests, and Neuron/EFA attribute tests |
+| `pkg/inventory/cloud.go` | **Modified** | Added `CloudProviderHintAWS`, wired up `aws.OnAWS` detection and `aws.GetInstance` retrieval |
+| `pkg/inventory/db.go` | **Modified** | Added `CloudProviderHintAWS` to validation in `WithCloudProviderHint` |
+| `cmd/dranet/app.go` | **Modified** | Updated `--cloud-provider-hint` help text to include `AWS` |
 
-### Phase 2: EFA Device Identification
+### Phase 2: EFA Device Identification [DEFERRED]
 
-#### 2.1 EFA Attribute
+EFA devices are already discoverable through DraNet's existing mechanisms:
+- **PCI discovery** identifies them as Amazon PCI devices (`dra.net/pciVendor: "Amazon.com, Inc."`, `dra.net/pciDevice: "Elastic Fabric Adapter (EFA)"`)
+- **RDMA discovery** marks them as RDMA-capable (`dra.net/rdma: true`)
+- **NUMA topology** is exposed via `dra.net/numaNode`
 
-Add an `efa` boolean attribute so users can select EFA devices in DeviceClass CEL expressions:
+Users can select EFA devices today using CEL expressions on existing attributes:
 
-```go
-// pkg/apis/attributes.go
-AttrEFA = AttrPrefix + "/" + "efa"  // dra.net/efa
+```cel
+device.driver == "dra.net" &&
+attributes["dra.net/rdma"].BoolValue == true &&
+attributes["dra.net/pciVendor"].StringValue == "Amazon.com, Inc."
 ```
 
-#### 2.2 EFA Detection Logic
+A dedicated `dra.net/efa` boolean attribute may be added in a future iteration for convenience, but is not required for EFA functionality.
 
-EFA devices can be identified by their PCI vendor/device ID or kernel driver. Two approaches (implement both for robustness):
-
-**Approach A — PCI Device ID check** (in `discoverPCIDevices`):
-```go
-// Amazon EFA PCI vendor: 0x1d0f, device: 0xefa0/0xefa1/0xefa2
-func isEFADevice(dev *ghw.PCIDevice) bool {
-    if dev.Vendor == nil {
-        return false
-    }
-    return dev.Vendor.ID == "1d0f" && strings.HasPrefix(dev.Product.ID, "efa")
-}
-```
-
-**Approach B — sysfs driver check** (in `addLinkAttributes`):
-```go
-// /sys/class/net/<ifname>/device/driver -> .../efa
-func isEFAInterface(ifName string) bool {
-    driverPath, _ := os.Readlink(filepath.Join(sysnetPath, ifName, "device", "driver"))
-    return filepath.Base(driverPath) == "efa"
-}
-```
-
-#### 2.3 Files to Create/Modify
-
-| File | Action | Description |
-|------|--------|-------------|
-| `pkg/apis/attributes.go` | **Modify** | Add `AttrEFA` constant |
-| `pkg/inventory/db.go` | **Modify** | Set `AttrEFA` in `discoverPCIDevices` or `addLinkAttributes` |
-| `pkg/inventory/sysfs.go` | **Modify** | Add `isEFADevice()` and/or `isEFAInterface()` helpers |
-| `pkg/inventory/sysfs_test.go` | **Modify** | Add tests for EFA detection |
-
-### Phase 3: Registration and Wiring
+### Phase 3: Registration and Wiring [IMPLEMENTED]
 
 #### 3.1 Cloud Provider Registration
 
@@ -182,134 +141,152 @@ In `pkg/inventory/cloud.go`:
 ```go
 const CloudProviderHintAWS CloudProviderHint = "AWS"
 
-// Add to discoverCloudProvider():
+// In discoverCloudProvider():
 CloudProviderHintAWS: aws.OnAWS,
 
-// Add to getInstanceProperties():
+// In getInstanceProperties():
 CloudProviderHintAWS: aws.GetInstance,
 ```
 
 #### 3.2 Cloud Provider Hint Validation
 
-In `pkg/inventory/db.go`, add `CloudProviderHintAWS` to the `WithCloudProviderHint` validation:
+In `pkg/inventory/db.go`, `CloudProviderHintAWS` is included in the `WithCloudProviderHint` validation:
 
 ```go
-if h != CloudProviderHintGCE && h != CloudProviderHintAzure && h != CloudProviderHintOKE && h != CloudProviderHintAWS && h != CloudProviderHintNone {
+if h != CloudProviderHintGCE && h != CloudProviderHintAWS && h != CloudProviderHintAzure && h != CloudProviderHintOKE && h != CloudProviderHintNone {
     klog.Fatalf("unknown cloud provider hint %q", hint)
 }
 ```
 
 #### 3.3 CLI Help Text
 
-In `cmd/dranet/app.go`, update the `--cloud-provider-hint` flag description:
+In `cmd/dranet/app.go`, the `--cloud-provider-hint` flag description includes AWS:
 ```
-Supported values: (GCE, AZURE, OKE, AWS, NONE)
-```
-
-### Phase 4: EKS Example Manifests
-
-Create `examples/demo_eks_efa/` with working example manifests demonstrating EFA usage on EKS.
-
-#### 4.1 DeviceClass for EFA
-
-```yaml
-apiVersion: resource.k8s.io/v1
-kind: DeviceClass
-metadata:
-  name: efa
-spec:
-  selectors:
-  - cel:
-      expression: |
-        device.driver == "dra.net" &&
-        attributes["dra.net/efa"].BoolValue == true
+Supported values: (AWS, GCE, AZURE, OKE, NONE)
 ```
 
-#### 4.2 ResourceClaimTemplate for EFA
+### Phase 4: EKS Example Manifests [IMPLEMENTED]
 
-```yaml
-apiVersion: resource.k8s.io/v1
-kind: ResourceClaimTemplate
-metadata:
-  name: efa-claim
-spec:
-  spec:
-    devices:
-      requests:
-      - name: efa
-        deviceClassName: efa
-        count: 4  # Request 4 EFA interfaces
-```
+Created `examples/demo_eks_efa/` with discovery-focused example manifests demonstrating EFA device inspection on EKS. The demo targets **trn1.32xlarge** (Trainium) instances to validate the Neuron device group attribute enrichment from the AWS cloud provider plugin.
 
-#### 4.3 NCCL Test Job
+#### 4.1 Cluster Configuration
 
-A sample MPIJob or Job that uses EFA for multi-node NCCL all-reduce testing, demonstrating:
-- EFA device allocation via DRA ResourceClaims
-- GPU + EFA topology alignment via NUMA node matching
-- `/dev/shm` volume mount for shared memory
-- Huge pages resource requests
+`cluster.yaml` — eksctl cluster configuration for EKS 1.34 with:
+- 2x `trn1.32xlarge` Neuron + EFA nodes in a placement group (us-east-1b / use1-az4)
+- 2x `m5.xlarge` system nodes
+- EFA enabled (`efaEnabled: true`)
+- Capacity Block for ML for guaranteed Trainium availability
+- AL2023 Neuron AMI with pre-installed EFA and Neuron drivers
+- Neuron taints for scheduling isolation
 
-#### 4.4 Files to Create
+#### 4.2 Setup and Cleanup Scripts
+
+`setup.sh` — Automated setup that searches for Capacity Block offerings, purchases one, patches `cluster.yaml` with the reservation ID, and creates the EKS cluster. Supports flags for region, AZ, instance type, count, duration, and start time filtering.
+
+`cleanup.sh` — Deletes the EKS cluster and cancels the Capacity Block reservation.
+
+#### 4.3 Expected ResourceSlice Reference
+
+`resourceslice-expected.yaml` — Reference ResourceSlice showing expected output from a trn1.32xlarge node:
+- 7 EFA devices exposed (primary ENI eth0 filtered as default gateway)
+- Each device includes: interface name, PCI address/vendor/device, MAC, MTU, NUMA node, RDMA capability, IP address, encapsulation, state, and type attributes
+- Demonstrates NUMA topology distribution (4 EFA on NUMA 0, 3 EFA on NUMA 1)
+- Includes `resource.aws.com/devicegroup*_id` Neuron device group attributes from the AWS cloud provider plugin
+
+#### 4.4 README
+
+`README.md` — Setup guide covering:
+- Prerequisites (AWS CLI, eksctl, kubectl, Helm)
+- trn1.32xlarge hardware details (16 Trainium chips, 8x EFA interfaces, NUMA layout)
+- Step-by-step Capacity Block purchase, cluster creation, DraNet deployment, and ResourceSlice inspection
+- Useful `jq` commands for filtering RDMA-capable devices, NUMA distribution, and Neuron device group attributes
+
+#### 4.5 Files Created
 
 | File | Action | Description |
 |------|--------|-------------|
-| `examples/demo_eks_efa/README.md` | **Create** | Setup guide for EKS with EFA |
-| `examples/demo_eks_efa/deviceclass.yaml` | **Create** | DeviceClass selecting EFA devices |
-| `examples/demo_eks_efa/resourceclaim.yaml` | **Create** | ResourceClaim requesting EFA devices |
-| `examples/demo_eks_efa/resourceclaimtemplate.yaml` | **Create** | Template for pod-level claims |
-| `examples/demo_eks_efa/nccl-test.yaml` | **Create** | Sample NCCL test workload |
+| `examples/demo_eks_efa/README.md` | **Created** | Setup guide for EKS with EFA discovery |
+| `examples/demo_eks_efa/setup.sh` | **Created** | Capacity Block purchase and EKS cluster creation |
+| `examples/demo_eks_efa/cleanup.sh` | **Created** | EKS cluster deletion and Capacity Block cancellation |
+| `examples/demo_eks_efa/cluster.yaml` | **Created** | eksctl cluster config with trn1.32xlarge + EFA |
+| `examples/demo_eks_efa/resourceslice-expected.yaml` | **Created** | Reference ResourceSlice from a trn1.32xlarge node |
 
-### Phase 5: Testing
+### Phase 5: Testing [PARTIALLY IMPLEMENTED]
 
-#### 5.1 Unit Tests
+#### 5.1 Unit Tests (Implemented)
 
 | Test | File | Description |
 |------|------|-------------|
-| IMDS mock server | `pkg/cloudprovider/aws/aws_test.go` | Test `OnAWS()`, `GetInstance()`, `GetDeviceAttributes()` with mock HTTP IMDS |
-| IMDSv2 token flow | `pkg/cloudprovider/aws/aws_test.go` | Verify token acquisition and header passing |
-| EFA PCI detection | `pkg/inventory/sysfs_test.go` | Test `isEFADevice()` with various PCI IDs |
-| EFA sysfs detection | `pkg/inventory/sysfs_test.go` | Test `isEFAInterface()` with mock sysfs |
-| Attribute population | `pkg/inventory/db_test.go` | Verify `dra.net/efa` attribute is set correctly |
+| `TestIsNeuronInstance` | `pkg/cloudprovider/aws/aws_test.go` | 9 test cases for Neuron instance type detection (trn*, inf*, p5, g5, m5, c6i, empty) |
+| `TestGetDeviceAttributes_NonNeuron` | `pkg/cloudprovider/aws/aws_test.go` | Verifies empty attributes for non-Neuron instances |
+| `TestGetDeviceAttributes_NeuronSuccess` | `pkg/cloudprovider/aws/aws_test.go` | Verifies device group attributes returned for Neuron + EFA devices |
+| `TestGetDeviceAttributes_NeuronLookupError` | `pkg/cloudprovider/aws/aws_test.go` | Verifies graceful handling of EFA lookup failures |
+| `TestGetDeviceAttributes_NeuronNotEFA` | `pkg/cloudprovider/aws/aws_test.go` | Verifies empty attributes when Neuron device is not EFA-bound |
+| `TestGetDeviceConfig` | `pkg/cloudprovider/aws/aws_test.go` | Verifies nil config returned |
+| `TestAWSInstanceImplementsCloudInstance` | `pkg/cloudprovider/aws/aws_test.go` | Compile-time interface check |
+| `TestGetInstance` | `pkg/cloudprovider/aws/aws_test.go` | 4 test cases with mock IMDS server (Neuron, GPU, standard, error) |
+| `TestGetInstance_IMDSClientError` | `pkg/cloudprovider/aws/aws_test.go` | Error handling for IMDS client creation |
+| `TestGetInstance_Timeout` | `pkg/cloudprovider/aws/aws_test.go` | Timeout behavior with slow IMDS |
+| `TestOnAWS` | `pkg/cloudprovider/aws/aws_test.go` | 2 test cases (on EC2, not on EC2) with mock IMDS |
+| `TestOnAWS_IMDSClientError` | `pkg/cloudprovider/aws/aws_test.go` | Error handling |
+| `TestOnAWS_Timeout` | `pkg/cloudprovider/aws/aws_test.go` | Timeout behavior with 100ms parent context |
 
-#### 5.2 Integration / E2E Tests
+Test infrastructure includes a `fakeIMDSServer` that mimics the EC2 IMDS token and identity document endpoints, plus `overrideIMDSClient` / `overrideIMDSClientError` helpers for test isolation.
 
-- Deploy DraNet on an EKS cluster with EFA-enabled nodes (e.g., `p5.48xlarge`)
+#### 5.2 Integration Tests (Not Yet Implemented)
+
+- Deploy DraNet on an EKS cluster with EFA-enabled Neuron nodes (trn1.32xlarge)
 - Verify EFA devices appear in ResourceSlice with correct attributes
+- Verify Neuron device group attributes are populated by the AWS cloud provider plugin
 - Verify EFA devices can be allocated to pods via ResourceClaim
 - Verify RDMA character devices (`/dev/infiniband/uverbs*`) are injected into containers
-- Verify NCCL all-reduce test completes successfully across nodes using EFA
 
 ## Implementation Sequence
 
 ```
-Phase 1: AWS Cloud Provider Plugin
-  1.1 Create pkg/cloudprovider/aws/aws.go
-      - OnAWS() detection
-      - GetInstance() with IMDSv2 token auth
-      - AWSInstance struct with GetDeviceAttributes() and GetDeviceConfig()
-  1.2 Create pkg/cloudprovider/aws/aws_test.go
-      - Mock IMDS server tests
+Phase 1: AWS Cloud Provider Plugin [DONE]
+  1.1 Created pkg/cloudprovider/aws/aws.go
+      - OnAWS() detection via AWS SDK v2 IMDS client
+      - GetInstance() with GetInstanceIdentityDocument
+      - AWSInstance struct with Neuron-aware GetDeviceAttributes()
+      - EFA driver detection via sysfs for Neuron device group mapping
+  1.2 Created pkg/cloudprovider/aws/aws_test.go
+      - 13 test functions with mock IMDS server
 
-Phase 2: EFA Device Identification
-  2.1 Add AttrEFA to pkg/apis/attributes.go
-  2.2 Add EFA detection in pkg/inventory/sysfs.go
-  2.3 Set AttrEFA in pkg/inventory/db.go during device scan
-  2.4 Add tests in pkg/inventory/sysfs_test.go
+Phase 2: EFA Device Identification [DEFERRED]
+  - Existing PCI/RDMA discovery already exposes EFA devices with
+    vendor, device, RDMA, and NUMA attributes
+  - Dedicated dra.net/efa attribute deferred to future iteration
 
-Phase 3: Registration and Wiring
-  3.1 Add CloudProviderHintAWS to pkg/inventory/cloud.go
-  3.2 Update validation in pkg/inventory/db.go
-  3.3 Update CLI help in cmd/dranet/app.go
+Phase 3: Registration and Wiring [DONE]
+  3.1 Added CloudProviderHintAWS to pkg/inventory/cloud.go
+  3.2 Updated validation in pkg/inventory/db.go
+  3.3 Updated CLI help in cmd/dranet/app.go
 
-Phase 4: Examples
-  4.1 Create examples/demo_eks_efa/ directory
-  4.2 Write DeviceClass, ResourceClaim, and workload manifests
-  4.3 Write README with setup instructions
+Phase 4: Examples [DONE]
+  4.1 Created examples/demo_eks_efa/ directory
+  4.2 Cluster config (trn1.32xlarge, us-east-1b, Capacity Block)
+  4.3 Setup/cleanup scripts for Capacity Block lifecycle
+  4.4 Expected ResourceSlice with Neuron device group attributes
+  4.5 README with step-by-step guide
+  4.6 Workload scheduling manifests (DeviceClass, ResourceClaim) deferred
 
-Phase 5: Testing
-  5.1 Unit tests for all new code
-  5.2 Integration testing on EKS with EFA-capable instances
+Phase 5: Testing [PARTIAL]
+  5.1 Unit tests for AWS cloud provider (13 test functions)
+  5.2 Integration testing on EKS with EFA-capable instances (not yet done)
 ```
+
+## Future Work
+
+The following items are candidates for future iterations:
+
+1. **Full AWS metadata enrichment** — Add per-interface attributes from IMDS (ENI ID, subnet ID, VPC ID, device number) and instance-level attributes (availability zone, placement group). This would require querying IMDS per-MAC metadata endpoints and correlating by MAC address.
+
+2. **Dedicated `dra.net/efa` attribute** — Add a boolean attribute for convenient EFA device selection without relying on PCI vendor/device string matching.
+
+3. **Workload scheduling examples** — Add DeviceClass, ResourceClaimTemplate, and NCCL test job manifests to the `examples/demo_eks_efa/` directory.
+
+4. **Non-Neuron device attributes** — Extend `GetDeviceAttributes` to return useful attributes (instance type, AZ) for all AWS instances, not just Neuron.
 
 ## Compatibility Notes
 
@@ -317,22 +294,26 @@ Phase 5: Testing
 - **Existing EFA device plugin** — DraNet can coexist with the `aws-efa-k8s-device-plugin`, but users should migrate to DRA-based allocation for topology-aware scheduling benefits
 - **VPC CNI** — DraNet does not replace the VPC CNI; it manages the secondary EFA interfaces that are used for high-performance inter-node communication, while the VPC CNI handles the primary pod networking
 - **Kernel requirements** — the `efa` kernel module must be loaded on the node (standard on EKS-optimized AMIs)
-- **RDMA netns mode** — EFA supports both shared and exclusive RDMA modes, which DraNet already handles via `rdmaSharedMode` detection in `pkg/driver/driver.go:110-116`
+- **RDMA netns mode** — EFA supports both shared and exclusive RDMA modes, which DraNet already handles via `rdmaSharedMode` detection in `pkg/driver/driver.go`
 
 ## Resolved Questions
 
-1. **EFA-only interfaces** — AWS supports "EFA-only" interface types (no IP connectivity, only OS-bypass). **No new attribute is needed.** EFA-only interfaces still appear as network interfaces with RDMA capability but have no IP addresses assigned. Since `addLinkAttributes` (`pkg/inventory/db.go:393-413`) only sets `dra.net/ipv4` and `dra.net/ipv6` when global unicast addresses exist, their absence naturally signals "EFA-only". Users can distinguish via CEL:
+1. **EFA-only interfaces** — AWS supports "EFA-only" interface types (no IP connectivity, only OS-bypass). **No new attribute is needed.** EFA-only interfaces still appear as network interfaces with RDMA capability but have no IP addresses assigned. Since `addLinkAttributes` (`pkg/inventory/db.go`) only sets `dra.net/ipv4` and `dra.net/ipv6` when global unicast addresses exist, their absence naturally signals "EFA-only". Users can distinguish via CEL:
    ```cel
    # Regular EFA (with IP)
-   attributes["dra.net/efa"].BoolValue == true && "dra.net/ipv4" in attributes
+   attributes["dra.net/rdma"].BoolValue == true && "dra.net/ipv4" in attributes
 
    # EFA-only (OS-bypass only, no IP)
-   attributes["dra.net/efa"].BoolValue == true && !("dra.net/ipv4" in attributes)
+   attributes["dra.net/rdma"].BoolValue == true && !("dra.net/ipv4" in attributes)
    ```
+
+2. **IMDS integration approach** — Resolved by using the AWS SDK v2 IMDS client rather than raw HTTP requests. The SDK handles IMDSv2 token lifecycle, retries, and timeouts automatically, reducing implementation complexity and improving reliability.
+
+3. **Neuron-first scope** — The initial implementation scopes cloud-provider-specific attributes to Neuron instances (Trainium/Inferentia), where EFA device group mapping is critical for topology-aware accelerator scheduling. The demo targets trn1.32xlarge to validate this path. Non-Neuron EFA instances (p4d, p5) are fully functional via DraNet's existing PCI/RDMA discovery.
 
 ## Open Questions
 
-1. **EFA-only interface correlation** — The current design assumes AWS metadata enrichment can match devices by MAC address. How should DraNet identify and enrich EFA-only attachments that may present as RDMA-capable PCI devices without a usable Linux netdev or without the same metadata surface as ENA-backed interfaces? Should v1 explicitly scope EFA-only out, or should we add a PCI-address-based correlation path?
+1. **EFA-only interface correlation** — The current design assumes AWS metadata enrichment can match devices by MAC address. How should DraNet identify and enrich EFA-only attachments that may present as RDMA-capable PCI devices without a usable Linux netdev or without the same metadata surface as ENA-backed interfaces? Should a future iteration add a PCI-address-based correlation path?
 
 2. **Coexistence with `aws-efa-k8s-device-plugin`** — The proposal currently says DraNet can coexist with the legacy EFA device plugin, but both components would advertise and prepare access to the same hardware. Do we want to support true coexistence, or should the design require mutual exclusivity and define a migration path from the device plugin to DraNet?
 

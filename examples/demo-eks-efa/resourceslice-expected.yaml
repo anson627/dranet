@@ -1,0 +1,270 @@
+# Expected ResourceSlice from a trn1.32xlarge node running DraNet
+# with AWS cloud provider auto-detection.
+#
+# trn1.32xlarge hardware:
+#   - 16 Trainium chips (32 NeuronCores)
+#   - 8x EFA 100 Gbps interfaces (4 per NUMA node)
+#   - Primary ENI (ens32) on network card 0 -- filtered out as uplink
+#   - 128 vCPUs, 512 GiB memory, 2 NUMA nodes
+#
+# EFA PCI devices:
+#   - Vendor: Amazon.com, Inc.
+#   - Driver: efa
+#   - Subsystem: efa1
+#   - RDMA capable: true
+#
+# AWS cloud provider attributes (auto-detected via IMDS):
+#   - resource.aws.com/devicegroup1_id: PCI address of the EFA device itself
+#   - resource.aws.com/devicegroup4_id: group of 4 Neuron devices sharing EFA
+#   - resource.aws.com/devicegroup8_id: group of 8 Neuron devices sharing EFA
+#   - resource.aws.com/devicegroup16_id: all 16 Neuron devices on the instance
+#   These enable topology-aware scheduling of Neuron accelerators over EFA.
+#
+# DraNet discovers 8 EFA devices across 2 NUMA nodes.
+# The primary ENI (ens32) is filtered out as an uplink interface.
+# Actual PCI addresses, RDMA device names, and device group IDs vary per instance.
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  generateName: ip-XXXX.ec2.internal-dra.net-
+  ownerReferences:
+  - apiVersion: v1
+    controller: true
+    kind: Node
+    name: ip-XXXX.ec2.internal
+spec:
+  driver: dra.net
+  nodeName: ip-XXXX.ec2.internal
+  pool:
+    name: ip-XXXX.ec2.internal
+    generation: 1
+    resourceSliceCount: 1
+  devices:
+  # ---- NUMA 0: 4 EFA interfaces (PCIe roots 0x10, 0x20) ----
+  - name: pci-0000-10-19-0
+    attributes:
+      dra.net/numaNode:
+        int: 0
+      dra.net/pciAddress:
+        string: "0000:10:19.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap16s25
+      resource.aws.com/devicegroup1_id:
+        string: "0000:10:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 178a9e264a26793e
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:10
+
+  - name: pci-0000-10-1a-0
+    attributes:
+      dra.net/numaNode:
+        int: 0
+      dra.net/pciAddress:
+        string: "0000:10:1a.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap16s26
+      resource.aws.com/devicegroup1_id:
+        string: "0000:10:1a.0"
+      resource.aws.com/devicegroup4_id:
+        string: 88a3c6ad1661fe1d
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:10
+
+  - name: pci-0000-20-19-0
+    attributes:
+      dra.net/numaNode:
+        int: 0
+      dra.net/pciAddress:
+        string: "0000:20:19.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap32s25
+      resource.aws.com/devicegroup1_id:
+        string: "0000:20:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 69b2225fd72a59dd
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:20
+
+  - name: pci-0000-20-1a-0
+    attributes:
+      dra.net/numaNode:
+        int: 0
+      dra.net/pciAddress:
+        string: "0000:20:1a.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap32s26
+      resource.aws.com/devicegroup1_id:
+        string: "0000:20:1a.0"
+      resource.aws.com/devicegroup4_id:
+        string: e3c29faa0cd11323
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:20
+
+  # ---- NUMA 1: 4 EFA interfaces (PCIe roots 0x90, 0xa0) ----
+  - name: pci-0000-90-19-0
+    attributes:
+      dra.net/numaNode:
+        int: 1
+      dra.net/pciAddress:
+        string: "0000:90:19.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap144s25
+      resource.aws.com/devicegroup1_id:
+        string: "0000:90:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 69b2225fd72a59dd
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:90
+
+  - name: pci-0000-90-1a-0
+    attributes:
+      dra.net/numaNode:
+        int: 1
+      dra.net/pciAddress:
+        string: "0000:90:1a.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap144s26
+      resource.aws.com/devicegroup1_id:
+        string: "0000:90:1a.0"
+      resource.aws.com/devicegroup4_id:
+        string: e3c29faa0cd11323
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:90
+
+  - name: pci-0000-a0-19-0
+    attributes:
+      dra.net/numaNode:
+        int: 1
+      dra.net/pciAddress:
+        string: "0000:a0:19.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap160s25
+      resource.aws.com/devicegroup1_id:
+        string: "0000:a0:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 178a9e264a26793e
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:a0
+
+  - name: pci-0000-a0-1a-0
+    attributes:
+      dra.net/numaNode:
+        int: 1
+      dra.net/pciAddress:
+        string: "0000:a0:1a.0"
+      dra.net/pciDevice:
+        string: Elastic Fabric Adapter (EFA)
+      dra.net/pciSubsystem:
+        string: efa1
+      dra.net/pciVendor:
+        string: Amazon.com, Inc.
+      dra.net/rdma:
+        bool: true
+      dra.net/rdmaDevice:
+        string: rdmap160s26
+      resource.aws.com/devicegroup1_id:
+        string: "0000:a0:1a.0"
+      resource.aws.com/devicegroup4_id:
+        string: 88a3c6ad1661fe1d
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resource.kubernetes.io/pcieRoot:
+        string: pci0000:a0
+
+  # NOTE: trn1.32xlarge has 8 network cards with EFA.
+  # All 8 EFA interfaces are discovered as RDMA-capable devices.
+  # The primary ENI (ens32) is filtered out as an uplink interface.
+  # 4 EFA on NUMA 0 (PCIe roots 0x10, 0x20), 4 EFA on NUMA 1 (PCIe roots 0x90, 0xa0).
+  #
+  # Neuron device group attributes enable topology-aware scheduling:
+  # - devicegroup1_id: individual EFA device (PCI address)
+  # - devicegroup4_id: group of 4 Neuron devices sharing this EFA path
+  # - devicegroup8_id: group of 8 Neuron devices sharing this EFA path
+  # - devicegroup16_id: all 16 Neuron devices on the instance (same for all EFAs)
