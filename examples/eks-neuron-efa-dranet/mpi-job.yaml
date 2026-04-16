@@ -1,0 +1,116 @@
+# Neuron collective communication benchmark (nccom-test all_reduce) across
+# 2 trn1.32xlarge nodes with topology-aware Neuron + EFA co-scheduling.
+#
+# Prerequisites:
+#   kubectl apply --server-side -f https://github.com/kubeflow/mpi-operator/raw/refs/heads/master/deploy/v2beta1/mpi-operator.yaml
+#   helm upgrade --install neuron-helm-chart oci://public.ecr.aws/neuron/neuron-helm-chart --set "devicePlugin.enabled=false" --set "npd.enabled=false" --set "draDriver.enabled=true"
+#   kubectl apply -f install.yaml
+---
+apiVersion: resource.k8s.io/v1
+kind: DeviceClass
+metadata:
+  name: efa-rdma
+spec:
+  selectors:
+  - cel:
+      expression: >-
+        device.driver == "dra.net" &&
+        device.attributes["dra.net"].rdma == true &&
+        device.attributes["dra.net"].pciVendor == "Amazon.com, Inc."
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: neuron-efa-16x8
+spec:
+  spec:
+    devices:
+      requests:
+      - name: neuron-devices
+        exactly:
+          deviceClassName: neuron.aws.com
+          count: 16
+      - name: efa-devices
+        exactly:
+          deviceClassName: efa-rdma
+          count: 8
+      constraints:
+      - requests: ["neuron-devices", "efa-devices"]
+        matchAttribute: resource.aws.com/devicegroup16_id
+---
+apiVersion: kubeflow.org/v2beta1
+kind: MPIJob
+metadata:
+  name: nccom-test
+spec:
+  slotsPerWorker: 1
+  runPolicy:
+    cleanPodPolicy: Running
+  mpiReplicaSpecs:
+    Launcher:
+      replicas: 1
+      template:
+        spec:
+          tolerations:
+          - key: aws.amazon.com/neuron
+            operator: Exists
+            effect: NoSchedule
+          resourceClaims:
+          - name: neuron-efa
+            resourceClaimTemplateName: neuron-efa-16x8
+          containers:
+          - name: launcher
+            image: 763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training-neuronx:2.9.0-neuronx-py312-sdk2.29.0-ubuntu24.04
+            env:
+            - name: FI_EFA_USE_DEVICE_RDMA
+              value: "1"
+            - name: FI_PROVIDER
+              value: "efa"
+            - name: OMPI_ALLOW_RUN_AS_ROOT
+              value: "1"
+            - name: OMPI_ALLOW_RUN_AS_ROOT_CONFIRM
+              value: "1"
+            - name: CCOM_SOCKET_IFNAME
+              value: "eth0"
+            resources:
+              claims:
+              - name: neuron-efa
+            command:
+            - /bin/bash
+            - -c
+            - |
+              LAUNCHER=$(hostname)
+              WORKERS=$(awk '{split($1,a,"."); print a[1]"."a[2]}' /etc/mpi/hostfile | tr '\n' ' ')
+              export NEURON_RT_ROOT_COMM_ID="${LAUNCHER}:44444"
+              nccom-test all_reduce \
+                -r 2 -N 2 -s ${LAUNCHER} ${WORKERS} \
+                --minbytes 8 --maxbytes 2G --stepfactor 2 \
+                --iters 20 --warmup_iters 5
+    Worker:
+      replicas: 1
+      template:
+        spec:
+          tolerations:
+          - key: aws.amazon.com/neuron
+            operator: Exists
+            effect: NoSchedule
+          resourceClaims:
+          - name: neuron-efa
+            resourceClaimTemplateName: neuron-efa-16x8
+          containers:
+          - name: worker
+            image: 763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training-neuronx:2.9.0-neuronx-py312-sdk2.29.0-ubuntu24.04
+            env:
+            - name: FI_EFA_USE_DEVICE_RDMA
+              value: "1"
+            - name: FI_PROVIDER
+              value: "efa"
+            - name: OMPI_ALLOW_RUN_AS_ROOT
+              value: "1"
+            - name: OMPI_ALLOW_RUN_AS_ROOT_CONFIRM
+              value: "1"
+            - name: CCOM_SOCKET_IFNAME
+              value: "eth0"
+            resources:
+              claims:
+              - name: neuron-efa

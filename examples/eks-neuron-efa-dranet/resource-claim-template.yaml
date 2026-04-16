@@ -1,0 +1,19 @@
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: neuron-efa-16x8
+spec:
+  spec:
+    devices:
+      requests:
+      - name: neuron-devices
+        exactly:
+          deviceClassName: neuron.aws.com
+          count: 16
+      - name: efa-devices
+        exactly:
+          deviceClassName: efa-rdma
+          count: 8
+      constraints:
+      - requests: ["neuron-devices", "efa-devices"]
+        matchAttribute: resource.aws.com/devicegroup16_id

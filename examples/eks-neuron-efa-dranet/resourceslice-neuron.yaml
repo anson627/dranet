@@ -1,0 +1,567 @@
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  creationTimestamp: "2026-04-15T16:21:36Z"
+  generateName: ip-192-168-121-32.ec2.internal-neuron.aws.com-
+  generation: 1
+  name: ip-192-168-121-32.ec2.internal-neuron.aws.com-7226h
+  ownerReferences:
+  - apiVersion: v1
+    controller: true
+    kind: Node
+    name: ip-192-168-121-32.ec2.internal
+    uid: 3aa2ac73-5328-4f0c-8680-1faefa4e1647
+  resourceVersion: "20247"
+  uid: 32d15d5d-df20-43b0-9c8b-3c497ba3d7fc
+spec:
+  devices:
+  - attributes:
+      deviceId:
+        int: 6
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:90:19.0
+      resource.aws.com/devicegroup4_id:
+        string: 69b2225fd72a59dd
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 1
+      topology_y:
+        int: 2
+      topology4_id:
+        int: 1
+      topology8_id:
+        int: 0
+    name: neuron-device-6
+  - attributes:
+      deviceId:
+        int: 7
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:90:19.0
+      resource.aws.com/devicegroup4_id:
+        string: 69b2225fd72a59dd
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 1
+      topology_y:
+        int: 3
+      topology4_id:
+        int: 1
+      topology8_id:
+        int: 0
+    name: neuron-device-7
+  - attributes:
+      deviceId:
+        int: 3
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:a0:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: 88a3c6ad1661fe1d
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 0
+      topology_y:
+        int: 3
+      topology4_id:
+        int: 0
+      topology8_id:
+        int: 0
+    name: neuron-device-3
+  - attributes:
+      deviceId:
+        int: 10
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:90:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: e3c29faa0cd11323
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 2
+      topology_y:
+        int: 2
+      topology4_id:
+        int: 2
+      topology8_id:
+        int: 1
+    name: neuron-device-10
+  - attributes:
+      deviceId:
+        int: 11
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:90:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: e3c29faa0cd11323
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 2
+      topology_y:
+        int: 3
+      topology4_id:
+        int: 2
+      topology8_id:
+        int: 1
+    name: neuron-device-11
+  - attributes:
+      deviceId:
+        int: 15
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:a0:19.0
+      resource.aws.com/devicegroup4_id:
+        string: 178a9e264a26793e
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 3
+      topology_y:
+        int: 3
+      topology4_id:
+        int: 3
+      topology8_id:
+        int: 1
+    name: neuron-device-15
+  - attributes:
+      deviceId:
+        int: 0
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:10:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: 88a3c6ad1661fe1d
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 0
+      topology_y:
+        int: 0
+      topology4_id:
+        int: 0
+      topology8_id:
+        int: 0
+    name: neuron-device-0
+  - attributes:
+      deviceId:
+        int: 1
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:10:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: 88a3c6ad1661fe1d
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 0
+      topology_y:
+        int: 1
+      topology4_id:
+        int: 0
+      topology8_id:
+        int: 0
+    name: neuron-device-1
+  - attributes:
+      deviceId:
+        int: 4
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: "0000:20:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 69b2225fd72a59dd
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 1
+      topology_y:
+        int: 0
+      topology4_id:
+        int: 1
+      topology8_id:
+        int: 0
+    name: neuron-device-4
+  - attributes:
+      deviceId:
+        int: 8
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:20:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: e3c29faa0cd11323
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 2
+      topology_y:
+        int: 0
+      topology4_id:
+        int: 2
+      topology8_id:
+        int: 1
+    name: neuron-device-8
+  - attributes:
+      deviceId:
+        int: 12
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: "0000:10:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 178a9e264a26793e
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 3
+      topology_y:
+        int: 0
+      topology4_id:
+        int: 3
+      topology8_id:
+        int: 1
+    name: neuron-device-12
+  - attributes:
+      deviceId:
+        int: 2
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:a0:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: 88a3c6ad1661fe1d
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 0
+      topology_y:
+        int: 2
+      topology4_id:
+        int: 0
+      topology8_id:
+        int: 0
+    name: neuron-device-2
+  - attributes:
+      deviceId:
+        int: 5
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: "0000:20:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 69b2225fd72a59dd
+      resource.aws.com/devicegroup8_id:
+        string: 86c451036f622685
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 1
+      topology_y:
+        int: 1
+      topology4_id:
+        int: 1
+      topology8_id:
+        int: 0
+    name: neuron-device-5
+  - attributes:
+      deviceId:
+        int: 9
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:20:1a.0
+      resource.aws.com/devicegroup4_id:
+        string: e3c29faa0cd11323
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 2
+      topology_y:
+        int: 1
+      topology4_id:
+        int: 2
+      topology8_id:
+        int: 1
+    name: neuron-device-9
+  - attributes:
+      deviceId:
+        int: 13
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: "0000:10:19.0"
+      resource.aws.com/devicegroup4_id:
+        string: 178a9e264a26793e
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 3
+      topology_y:
+        int: 1
+      topology4_id:
+        int: 3
+      topology8_id:
+        int: 1
+    name: neuron-device-13
+  - attributes:
+      deviceId:
+        int: 14
+      draDriverVersion:
+        version: 1.0.0
+      instanceType:
+        string: trn1.32xlarge
+      networkNodeLayer1:
+        string: nn-27951e8b5f0b6c4fe
+      networkNodeLayer2:
+        string: nn-e4ed5f6d14a986202
+      networkNodeLayer3:
+        string: nn-0f43aef49613f02d1
+      neuronDriverVersion:
+        string: 2.26.10.0
+      resource.aws.com/devicegroup1_id:
+        string: 0000:a0:19.0
+      resource.aws.com/devicegroup4_id:
+        string: 178a9e264a26793e
+      resource.aws.com/devicegroup8_id:
+        string: aa86c05423d6e8cd
+      resource.aws.com/devicegroup16_id:
+        string: fb838249c99a6341
+      resourceType:
+        string: neuron_device
+      topology_x:
+        int: 3
+      topology_y:
+        int: 2
+      topology4_id:
+        int: 3
+      topology8_id:
+        int: 1
+    name: neuron-device-14
+  driver: neuron.aws.com
+  nodeName: ip-192-168-121-32.ec2.internal
+  pool:
+    generation: 1
+    name: ip-192-168-121-32.ec2.internal
+    resourceSliceCount: 1

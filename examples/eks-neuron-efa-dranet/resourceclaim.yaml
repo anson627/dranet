@@ -1,0 +1,449 @@
+apiVersion: v1
+items:
+- apiVersion: resource.k8s.io/v1
+  kind: ResourceClaim
+  metadata:
+    annotations:
+      resource.kubernetes.io/pod-claim-name: neuron-efa
+    creationTimestamp: "2026-04-15T18:14:29Z"
+    finalizers:
+    - resource.kubernetes.io/delete-protection
+    generateName: nccom-test-launcher-vz4dk-neuron-efa-
+    name: nccom-test-launcher-vz4dk-neuron-efa-rz6dt
+    namespace: default
+    ownerReferences:
+    - apiVersion: v1
+      blockOwnerDeletion: true
+      controller: true
+      kind: Pod
+      name: nccom-test-launcher-vz4dk
+      uid: a7964895-cead-4a64-b7b3-2bc1322c80d8
+    resourceVersion: "43753"
+    uid: 8a0b0f5e-0fe8-41e8-9bb2-8d0a39d00e00
+  spec:
+    devices:
+      constraints:
+      - matchAttribute: resource.aws.com/devicegroup16_id
+        requests:
+        - neuron-devices
+        - efa-devices
+      requests:
+      - exactly:
+          allocationMode: ExactCount
+          count: 16
+          deviceClassName: neuron.aws.com
+        name: neuron-devices
+      - exactly:
+          allocationMode: ExactCount
+          count: 8
+          deviceClassName: efa-rdma
+        name: efa-devices
+  status:
+    allocation:
+      devices:
+        results:
+        - device: neuron-device-6
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-7
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-3
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-10
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-11
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-15
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-0
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-1
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-4
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-8
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-12
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-2
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-5
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-9
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-13
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-14
+          driver: neuron.aws.com
+          pool: ip-192-168-121-32.ec2.internal
+          request: neuron-devices
+        - device: pci-0000-10-19-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-10-1a-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-20-19-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-20-1a-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-90-19-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-90-1a-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-a0-19-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+        - device: pci-0000-a0-1a-0
+          driver: dra.net
+          pool: ip-192-168-121-32.ec2.internal
+          request: efa-devices
+      nodeSelector:
+        nodeSelectorTerms:
+        - matchFields:
+          - key: metadata.name
+            operator: In
+            values:
+            - ip-192-168-121-32.ec2.internal
+    devices:
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-10-1a-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-20-19-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-20-1a-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-90-19-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-90-1a-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-a0-19-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-a0-1a-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-10-19-0
+      driver: dra.net
+      pool: ip-192-168-121-32.ec2.internal
+    reservedFor:
+    - name: nccom-test-launcher-vz4dk
+      resource: pods
+      uid: a7964895-cead-4a64-b7b3-2bc1322c80d8
+- apiVersion: resource.k8s.io/v1
+  kind: ResourceClaim
+  metadata:
+    annotations:
+      resource.kubernetes.io/pod-claim-name: neuron-efa
+    creationTimestamp: "2026-04-15T18:14:29Z"
+    finalizers:
+    - resource.kubernetes.io/delete-protection
+    generateName: nccom-test-worker-0-neuron-efa-
+    name: nccom-test-worker-0-neuron-efa-txb6n
+    namespace: default
+    ownerReferences:
+    - apiVersion: v1
+      blockOwnerDeletion: true
+      controller: true
+      kind: Pod
+      name: nccom-test-worker-0
+      uid: 130f9bc9-262a-49ec-b0bd-75b76c21ebac
+    resourceVersion: "43748"
+    uid: 66997eb4-74cb-48e5-8784-ba6dcfb336b3
+  spec:
+    devices:
+      constraints:
+      - matchAttribute: resource.aws.com/devicegroup16_id
+        requests:
+        - neuron-devices
+        - efa-devices
+      requests:
+      - exactly:
+          allocationMode: ExactCount
+          count: 16
+          deviceClassName: neuron.aws.com
+        name: neuron-devices
+      - exactly:
+          allocationMode: ExactCount
+          count: 8
+          deviceClassName: efa-rdma
+        name: efa-devices
+  status:
+    allocation:
+      devices:
+        results:
+        - device: neuron-device-0
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-6
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-8
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-14
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-1
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-4
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-7
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-10
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-3
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-5
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-9
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-12
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-15
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-2
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-11
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: neuron-device-13
+          driver: neuron.aws.com
+          pool: ip-192-168-98-38.ec2.internal
+          request: neuron-devices
+        - device: pci-0000-10-19-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-10-1a-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-20-19-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-20-1a-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-90-19-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-90-1a-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-a0-19-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+        - device: pci-0000-a0-1a-0
+          driver: dra.net
+          pool: ip-192-168-98-38.ec2.internal
+          request: efa-devices
+      nodeSelector:
+        nodeSelectorTerms:
+        - matchFields:
+          - key: metadata.name
+            operator: In
+            values:
+            - ip-192-168-98-38.ec2.internal
+    devices:
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-90-19-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-90-1a-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-a0-19-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-a0-1a-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-10-19-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-10-1a-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-20-19-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    - conditions:
+      - lastTransitionTime: "2026-04-15T18:14:30Z"
+        message: ""
+        reason: RDMAOnlyDeviceReady
+        status: "True"
+        type: Ready
+      device: pci-0000-20-1a-0
+      driver: dra.net
+      pool: ip-192-168-98-38.ec2.internal
+    reservedFor:
+    - name: nccom-test-worker-0
+      resource: pods
+      uid: 130f9bc9-262a-49ec-b0bd-75b76c21ebac
+kind: List
+metadata:
+  resourceVersion: ""
