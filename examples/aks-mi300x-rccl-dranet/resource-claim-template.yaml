@@ -1,0 +1,52 @@
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: 8nic-all
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nic
+        exactly:
+          deviceClassName: dranet.net
+          count: 8
+          selectors:
+          - cel:
+              expression: 'device.attributes["dra.net"]["rdma"] == true'
+          - cel:
+              expression: >-
+                device.attributes["azure.dra.net"]["vmSize"] == "Standard_ND96isr_MI300X_v5"
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: 4nic-numa0
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nic
+        exactly:
+          deviceClassName: dranet.net
+          count: 4
+          selectors:
+          - cel:
+              expression: >-
+                device.attributes["dra.net"]["rdma"] == true &&
+                device.attributes["dra.net"]["numaNode"] == 0
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: 1nic-single
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nic
+        exactly:
+          deviceClassName: dranet.net
+          count: 1
+          selectors:
+          - cel:
+              expression: 'device.attributes["dra.net"]["rdmaDevice"] == "mlx5_0"'
