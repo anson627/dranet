@@ -1,18 +1,18 @@
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  creationTimestamp: "2026-04-21T20:47:22Z"
+  creationTimestamp: "2026-04-24T15:37:36Z"
   generateName: aks-gpu-37973606-vmss000000-dra.net-
-  generation: 10
-  name: aks-gpu-37973606-vmss000000-dra.net-mmds9
+  generation: 1
+  name: aks-gpu-37973606-vmss000000-dra.net-twgcs
   ownerReferences:
   - apiVersion: v1
     controller: true
     kind: Node
     name: aks-gpu-37973606-vmss000000
     uid: 0d838c75-a689-426c-a3ea-07128c5efbe1
-  resourceVersion: "323623"
-  uid: f212dbd1-b630-4966-8072-4cd501d13925
+  resourceVersion: "1080115"
+  uid: 9dc9810f-ae39-4e74-a58c-f7058e4cfb4b
 spec:
   devices:
   - attributes:

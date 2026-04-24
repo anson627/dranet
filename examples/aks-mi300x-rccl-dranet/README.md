@@ -71,58 +71,22 @@ correspond to the DRA-allocated NIC(s) — without `privileged: true`, other
 
 | File | Description |
 |---|---|
-| `resource-claim-template.yaml` | Three `ResourceClaimTemplate` objects for the three test cases |
+| `resource-claim-template.yaml` | Four `ResourceClaimTemplate` objects for the test cases |
 | `mpi-job.yaml` | `MPIJob` that runs `rccl-tests/all_reduce_perf` across 2 workers × 8 GPUs |
 | `resourceslice-dranet.yaml` | Live NIC `ResourceSlice` from an MI300X node (reference) |
+| `results-*.log` | Raw launcher logs from each benchmark variant |
 
-The RCCL test container image is built by `demo/aks/gpu/rccl.sh` from
-`demo/aks/gpu/rccl/Dockerfile` (ROCm 6.3.4 + `rccl-tests` built with
-`GPU_TARGETS=gfx942` for MI300X).
+The RCCL test container is `ghcr.io/anson627/rccl-tests:rocm7` — ROCm 7.2.2 /
+RCCL 2.27.7 built with `GPU_TARGETS=gfx942` for MI300X. The Dockerfile lives at
+`demo/aks/gpu/rccl/Dockerfile` (set to base `rocm/dev-ubuntu-24.04:7.2.2` for
+GDR via dma-buf support).
 
 ## ResourceClaimTemplates
 
-Three templates are defined. Change `mpi-job.yaml` `resourceClaimTemplateName:`
+Four templates are defined. Change `mpi-job.yaml` `resourceClaimTemplateName:`
 to switch between them.
 
-### `8nic-all` — all 8 RDMA NICs per worker (default)
-
-Each worker pod requests all 8 ConnectX VFs, pinned to the MI300X VM size so
-the scheduler never lands the workload on a foreign SKU:
-
-```yaml
-- name: nic
-  exactly:
-    deviceClassName: dranet.net
-    count: 8
-    selectors:
-    - cel:
-        expression: 'device.attributes["dra.net"]["rdma"] == true'
-    - cel:
-        expression: >-
-          device.attributes["azure.dra.net"]["vmSize"] == "Standard_ND96isr_MI300X_v5"
-```
-
-This is the shape most MI300X RCCL jobs want: 8 GPUs paired with 8 NICs,
-full fabric bandwidth per worker.
-
-### `4nic-numa0` — 4 NICs on NUMA 0
-
-```yaml
-- name: nic
-  exactly:
-    deviceClassName: dranet.net
-    count: 4
-    selectors:
-    - cel:
-        expression: >-
-          device.attributes["dra.net"]["rdma"] == true &&
-          device.attributes["dra.net"]["numaNode"] == 0
-```
-
-DRA picks 4 distinct NUMA-0 devices (`mlx5_0`–`mlx5_3`). Use when pinning a
-partial workload to one NUMA domain.
-
-### `1nic-single` — single specific NIC
+### `1nic-aligned` — 1 NIC on NUMA 0 (`mlx5_0`)
 
 ```yaml
 - name: nic
@@ -134,8 +98,56 @@ partial workload to one NUMA domain.
         expression: 'device.attributes["dra.net"]["rdmaDevice"] == "mlx5_0"'
 ```
 
-Useful for verifying NRI-based device isolation — only `/dev/infiniband/uverbs0`
-should appear inside the pod.
+One NIC on the same NUMA node as GPU 0. Useful as a baseline for per-NIC
+throughput and for verifying NRI-based device isolation: only
+`/dev/infiniband/uverbs0` should appear inside the pod.
+
+### `1nic-unaligned` — 1 NIC on NUMA 1 (`mlx5_4`)
+
+```yaml
+- name: nic
+  exactly:
+    deviceClassName: dranet.net
+    count: 1
+    selectors:
+    - cel:
+        expression: 'device.attributes["dra.net"]["rdmaDevice"] == "mlx5_4"'
+```
+
+One NIC on the opposite NUMA node. On systems with PCIe-only GPU↔NIC paths
+this costs bandwidth (cross-NUMA); on MI300X, GPUs are fully mesh-connected
+via XGMI so alignment matters much less — see *Benchmark Results* below.
+
+### `2nic-aligned` — 2 NICs on NUMA 0
+
+```yaml
+- name: nic
+  exactly:
+    deviceClassName: dranet.net
+    count: 2
+    selectors:
+    - cel:
+        expression: >-
+          device.attributes["dra.net"]["rdma"] == true &&
+          device.attributes["dra.net"]["numaNode"] == 0
+```
+
+DRA picks 2 distinct NUMA-0 devices (`mlx5_0` + `mlx5_1`). Demonstrates
+multi-device allocation from a homogeneous pool.
+
+### `8nic-all` — all 8 RDMA NICs per worker
+
+```yaml
+- name: nic
+  exactly:
+    deviceClassName: dranet.net
+    count: 8
+    selectors:
+    - cel:
+        expression: 'device.attributes["dra.net"]["rdma"] == true'
+```
+
+Full-fabric shape: 8 GPUs paired with 8 NICs per worker.
 
 ## Usage
 
@@ -147,7 +159,7 @@ kubectl apply --server-side -k "https://github.com/kubeflow/mpi-operator/manifes
 kubectl apply -f resource-claim-template.yaml
 
 # (Optional) switch templates by editing mpi-job.yaml:
-#   resourceClaimTemplateName: 8nic-all | 4nic-numa0 | 1nic-single
+#   resourceClaimTemplateName: 1nic-aligned | 1nic-unaligned | 2nic-aligned | 8nic-all
 
 kubectl apply -f mpi-job.yaml
 
@@ -175,6 +187,61 @@ kubectl get resourceclaims -o yaml | grep -E 'name:|device:' | head -40
 
 For the default `8nic-all` template, each worker's claim should list all eight
 `pci-010N-00-00-0` devices from the node it landed on.
+
+## Benchmark Results
+
+2-node `all_reduce_perf`, 16 ranks × MI300X (8 GPUs per node), RCCL 2.27.7 /
+ROCm 7.2.2, `NCCL_DMABUF_ENABLE=1` (dma-buf GDR). The NIC set visible to each
+worker is controlled by the DRA template. Raw logs saved as
+`results-<variant>.log`.
+
+| Template | NICs visible | NUMA | Avg busbw | Peak busbw (8 GiB) |
+|---|---|---|---|---|
+| `1nic-aligned` | `mlx5_0` | NUMA 0 | 15.68 GB/s | 15.78 GB/s |
+| `1nic-unaligned` | `mlx5_4` | NUMA 1 | 15.76 GB/s | 15.77 GB/s |
+| `2nic-aligned` | `mlx5_0`+`mlx5_1` | NUMA 0 | 16.34 GB/s | 16.34 GB/s |
+
+### Key observations
+
+**NUMA alignment does NOT matter on MI300X.** Unlike GB300 (NVLink mesh + per-GPU
+PCIe affinity to a NIC), MI300X has XGMI all-to-all between all 8 GPUs and the
+GPU↔NIC PCIe paths go through the host PCIe complex. The aligned and unaligned
+1-NIC runs are within noise (~15.7 GB/s).
+
+**NIC count has a small sub-linear effect at this rank count.** Going from 1→2
+NICs gains ~4%. At 16 ranks routed through 1–2 HCAs, the bottleneck is the
+inter-node fabric link(s), not the NIC count itself. Bigger gains would show up
+with higher rank counts / larger messages where the per-HCA queue pairs saturate.
+
+**GDR is enabled via dma-buf.** RCCL 2.27.7 + ROCm 7.2.2 + kernel 6.8 provides
+GDR through the dma-buf path (no `ib_peer_mem`/`amdp2p` kernel modules required):
+
+```
+Connected all rings, use ring PXN 0 GDR 1
+NCCL_DMABUF_ENABLE set by environment to 1
+```
+
+Older RCCL 2.22 (ROCm 6.3.4) **segfaults** with `NCCL_DMABUF_ENABLE=1` — the
+image base was upgraded to `rocm/dev-ubuntu-24.04:7.2.2` to fix this. Without
+`NCCL_DMABUF_ENABLE=1`, RCCL falls back to host-memory staging and prints
+`GDRDMA not enabled. Could not find memory_peers directory or peer_memory symbol`.
+
+**Isolation confirmed.** With `1nic-aligned` the worker only sees `uverbs0`;
+with `1nic-unaligned` only `uverbs4`. dranet's NRI plugin injects exactly the
+allocated `/dev/infiniband/uverbsN` char devices without `privileged: true`.
+
+### Host-side prerequisites for best performance
+
+- **Disable NUMA auto-balancing on the GPU nodes** (`sysctl kernel.numa_balancing=0`).
+  RCCL prints a `WARN NUMA auto balancing enabled` when this is on.
+- **Give each worker a proper `/dev/shm`.** ROCm 7.2 needs >64 MiB of shared
+  memory; mount an `emptyDir: {medium: Memory, sizeLimit: 8Gi}` at `/dev/shm`
+  as shown in `mpi-job.yaml`. Without this, RCCL init fails with
+  `No space left on device (28)` while creating `/dev/shm/nccl-*`.
+- **Allow enough warmup time for OpenMPI.** The launcher `sleep 60` at the top
+  of `mpirun` gives workers time to start `sshd` before the launcher connects;
+  otherwise mpirun hits `ORTE does not know how to route a message` and the
+  MPIJob backs off.
 
 ## Notes
 

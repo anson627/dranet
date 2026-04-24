@@ -1,7 +1,7 @@
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: 8nic-all
+  name: 1gpu-1nic
 spec:
   spec:
     devices:
@@ -9,18 +9,15 @@ spec:
       - name: nic
         exactly:
           deviceClassName: dranet.net
-          count: 8
+          count: 1
           selectors:
           - cel:
-              expression: 'device.attributes["dra.net"]["rdma"] == true'
-          - cel:
-              expression: >-
-                device.attributes["azure.dra.net"]["vmSize"] == "Standard_ND96isr_MI300X_v5"
+              expression: 'device.attributes["dra.net"]["rdmaDevice"] == "mlx5_0"'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: 4nic-numa0
+  name: 4gpu-4nic
 spec:
   spec:
     devices:
@@ -38,7 +35,7 @@ spec:
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: 1nic-single
+  name: 8gpu-8nic
 spec:
   spec:
     devices:
@@ -46,7 +43,7 @@ spec:
       - name: nic
         exactly:
           deviceClassName: dranet.net
-          count: 1
+          count: 8
           selectors:
           - cel:
-              expression: 'device.attributes["dra.net"]["rdmaDevice"] == "mlx5_0"'
+              expression: 'device.attributes["dra.net"]["rdma"] == true'
