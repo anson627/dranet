@@ -3,18 +3,15 @@ items:
 - apiVersion: resource.k8s.io/v1
   kind: ResourceSlice
   metadata:
-    creationTimestamp: '2026-02-27T00:29:36Z'
-    generateName: aks-user-34494392-vmss000000-gpu.nvidia.com-
-    generation: 1
-    name: aks-user-34494392-vmss000000-gpu.nvidia.com-kzs49
+    generateName: aks-gpu-45139532-vmss000081-gpu.nvidia.com-
+    name: aks-gpu-45139532-vmss000081-gpu.nvidia.com-27g7w
     ownerReferences:
     - apiVersion: v1
       controller: true
       kind: Node
-      name: aks-user-34494392-vmss000000
-      uid: af90cd4f-d807-44d1-b41c-806a3def00fe
-    resourceVersion: '6002'
-    uid: ca4e6358-56ca-4230-b4ae-b2894db9b004
+      name: aks-gpu-45139532-vmss000081
+      uid: 00c21858-73a7-402e-88bc-5e33b1d39bb7
+    uid: 54700765-803c-489c-8388-64efe891729c
   spec:
     devices:
     - attributes:
@@ -33,13 +30,13 @@ items:
         productName:
           string: NVIDIA GB300
         resource.kubernetes.io/pciBusID:
-          string: '0008:06:00.0'
+          string: "0008:06:00.0"
         resource.kubernetes.io/pcieRoot:
           string: pci0008:00
         type:
           string: gpu
         uuid:
-          string: GPU-ca9a45fc-1a42-d59a-7d89-316aaaae8c9e
+          string: GPU-ad11da28-7944-0f37-addf-86beae05fed3
       capacity:
         memory:
           value: 284208Mi
@@ -60,13 +57,13 @@ items:
         productName:
           string: NVIDIA GB300
         resource.kubernetes.io/pciBusID:
-          string: '0009:06:00.0'
+          string: "0009:06:00.0"
         resource.kubernetes.io/pcieRoot:
           string: pci0009:00
         type:
           string: gpu
         uuid:
-          string: GPU-f4d725fd-1a19-1841-c5a3-908ca249660d
+          string: GPU-5f0db007-2a7b-b1cc-f0e7-8096b046f488
       capacity:
         memory:
           value: 284208Mi
@@ -87,13 +84,13 @@ items:
         productName:
           string: NVIDIA GB300
         resource.kubernetes.io/pciBusID:
-          string: '0018:06:00.0'
+          string: "0018:06:00.0"
         resource.kubernetes.io/pcieRoot:
           string: pci0018:00
         type:
           string: gpu
         uuid:
-          string: GPU-1afe65b8-cc7d-4bc7-cab7-f1eb7b192d29
+          string: GPU-893a4f93-eef0-28c5-d6bb-327930c64501
       capacity:
         memory:
           value: 284208Mi
@@ -114,24 +111,21 @@ items:
         productName:
           string: NVIDIA GB300
         resource.kubernetes.io/pciBusID:
-          string: '0019:06:00.0'
+          string: "0019:06:00.0"
         resource.kubernetes.io/pcieRoot:
           string: pci0019:00
         type:
           string: gpu
         uuid:
-          string: GPU-715c5a38-5c29-c060-0656-0c11f3a6f7e6
+          string: GPU-6a3c2cfe-c7b0-6f1a-365f-5e06dc652d96
       capacity:
         memory:
           value: 284208Mi
       name: gpu-3
     driver: gpu.nvidia.com
-    nodeName: aks-user-34494392-vmss000000
+    nodeName: aks-gpu-45139532-vmss000081
     pool:
-      generation: 1
-      name: aks-user-34494392-vmss000000
+      name: aks-gpu-45139532-vmss000081
       resourceSliceCount: 1
 kind: List
-metadata:
-  resourceVersion: ''
-
+metadata: {}

@@ -41,7 +41,8 @@ NIC mapping: NIC0=mlx5_0 (NUMA 0), NIC1=mlx5_1 (NUMA 0), NIC2=mlx5_2 (NUMA 1), N
 The ConnectX VFs on GB300 are in **InfiniBand mode** — they have no Ethernet
 netdev interface. dranet discovers them as IB-only devices by:
 
-1. Skipping IPoIB interfaces during netdev discovery
+1. Skipping IPoIB interfaces during netdev discovery (enabled via
+   `--move-ib-interfaces=false` on the dranet DaemonSet)
 2. Recording the RDMA link name (`rdmaDevice`) on the PCI device; a device is
    IB-only when it has a non-empty `rdmaDevice` and no `ifName`
 3. At pod start, using the NRI plugin to inject exactly the allocated
@@ -66,7 +67,7 @@ attaches two Azure-specific attributes to every device in the node's ResourceSli
 
 | Attribute | Source | Example |
 |---|---|---|
-| `azure.dra.net/placementGroupId` | IMDS `compute/placementGroupId` | `739e6cfb-2607-462e-9e2b-21d24b31f5ed` |
+| `azure.dra.net/placementGroupId` | IMDS `compute/placementGroupId` | `c6c749e8-a38b-470e-8c94-2a7d00001bf0` |
 | `azure.dra.net/vmSize` | IMDS `compute/vmSize` | `Standard_ND128isr_GB300_v6` |
 
 [az-ib]: https://learn.microsoft.com/en-us/azure/virtual-machines/setup-infiniband#cluster-configuration-options
@@ -274,16 +275,16 @@ is the idiomatic DRA approach for multi-device allocation from a homogeneous gro
 
 ## Placement group verification
 
-On a cluster with 2 `Standard_ND128isr_GB300_v6` GPU nodes split across two
-placement groups:
+On a cluster with 2 `Standard_ND128isr_GB300_v6` GPU nodes, each in its own
+placement group:
 
-| Node | placementGroupId | IB Devices |
+| Node | placementGroupId | IB Devices (pciAddress) |
 |---|---|---|
-| vmss000000 | `739e6cfb-2607-462e-9e2b-21d24b31f5ed` | mlx5_0 – mlx5_3 |
-| vmss000001 | `ab1690bb-a478-4039-b89a-8a3f4264d4b4` | mlx5_0 – mlx5_3 |
+| aks-gpu-45139532-vmss000081 | `c6c749e8-a38b-470e-8c94-2a7d00001bf0` | 0101/0102/0103/0104:00:00.0 |
+| aks-gpu-45139532-vmss000089 | `2b4b6af0-0ca2-4a02-b883-178618b5ab5e` | 0101/0102/0103/0104:00:00.0 |
 
-Confirmed that the two nodes have different `placementGroupId` values and that
-cross-placement-group IB is non-functional:
+Confirmed that nodes in different placement groups have different
+`placementGroupId` values and that cross-placement-group IB is non-functional:
 
 - **Intra-node `ib_write_bw`**: 449.43 Gb/s (working)
 - **Cross-node `ib_write_bw`** (different placement groups): transport retry counter exceeded, error 12 (broken)

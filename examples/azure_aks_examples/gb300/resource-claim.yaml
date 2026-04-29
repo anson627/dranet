@@ -3,7 +3,6 @@ kind: ResourceClaim
 metadata:
   annotations:
     resource.kubernetes.io/pod-claim-name: gpu-nic
-  creationTimestamp: "2026-03-04T15:55:17Z"
   finalizers:
   - resource.kubernetes.io/delete-protection
   generateName: nccl-test-dra-worker-0-gpu-nic-
@@ -16,7 +15,6 @@ metadata:
     kind: Pod
     name: nccl-test-dra-worker-0
     uid: 73a80211-3b6f-4c1a-a9ce-d14de38359be
-  resourceVersion: "3093435"
   uid: 99b2df4b-a79f-45c8-9957-a4da5901c456
 spec:
   devices:
@@ -44,11 +42,11 @@ status:
       results:
       - device: gpu-0
         driver: gpu.nvidia.com
-        pool: aks-user-34494392-vmss000000
+        pool: aks-gpu-45139532-vmss000081
         request: gpu
       - device: pci-0103-00-00-0
         driver: dra.net
-        pool: aks-user-34494392-vmss000000
+        pool: aks-gpu-45139532-vmss000081
         request: nic
     nodeSelector:
       nodeSelectorTerms:
@@ -56,17 +54,16 @@ status:
         - key: metadata.name
           operator: In
           values:
-          - aks-user-34494392-vmss000000
+          - aks-gpu-45139532-vmss000081
   devices:
   - conditions:
-    - lastTransitionTime: "2026-03-04T15:55:18Z"
-      message: ""
+    - message: ""
       reason: RDMAOnlyDeviceReady
       status: "True"
       type: Ready
     device: pci-0103-00-00-0
     driver: dra.net
-    pool: aks-user-34494392-vmss000000
+    pool: aks-gpu-45139532-vmss000081
   reservedFor:
   - name: nccl-test-dra-worker-0
     resource: pods

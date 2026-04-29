@@ -82,7 +82,7 @@ spec:
           selectors:
           - cel:
               expression: >-
-                device.attributes["azure.dra.net"]["placementGroupId"] == "739e6cfb-2607-462e-9e2b-21d24b31f5ed"
+                device.attributes["azure.dra.net"]["placementGroupId"] == "c6c749e8-a38b-470e-8c94-2a7d00001bf0"
           - cel:
               expression: >-
                 device.attributes["dra.net"]["rdma"] == true
