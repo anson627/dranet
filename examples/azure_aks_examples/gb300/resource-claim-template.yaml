@@ -66,3 +66,23 @@ spec:
           selectors:
           - cel:
               expression: 'device.attributes["dra.net"]["rdma"] == true && device.attributes["dra.net"]["numaNode"] == 0'
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: ib-same-fabric
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nic
+        exactly:
+          deviceClassName: dranet.net
+          count: 1
+          selectors:
+          - cel:
+              expression: >-
+                device.attributes["azure.dra.net"]["placementGroupId"] == "739e6cfb-2607-462e-9e2b-21d24b31f5ed"
+          - cel:
+              expression: >-
+                device.attributes["dra.net"]["rdma"] == true

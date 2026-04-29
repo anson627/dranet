@@ -1,8 +1,17 @@
-# AKS GB300 InfiniBand dranet Demo
+# AKS GB300 InfiniBand dranet Example
 
-End-to-end demo of topologically-aware GPU + InfiniBand NIC allocation using
+End-to-end example of topologically-aware GPU + InfiniBand NIC allocation using
 [Dynamic Resource Allocation (DRA)](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
 on Azure Kubernetes Service (AKS) with [ND GB300-v6 sizes series](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/gpu-accelerated/nd-gb300-v6-series?tabs=sizebasic).
+
+Two capabilities are demonstrated:
+
+1. **IB-only NIC discovery and isolation** — dranet exposes GB300 ConnectX VFs
+   (which have no Ethernet netdev) as DRA devices and injects only the allocated
+   `/dev/infiniband/uverbsN` into each pod.
+2. **Azure placement group awareness** — dranet exposes the VM's placement
+   group ID as a DRA device attribute, so CEL selectors can constrain a job to
+   a single InfiniBand fabric.
 
 ## Context
 
@@ -41,6 +50,27 @@ netdev interface. dranet discovers them as IB-only devices by:
 Without this, all four `uverbs*` devices would be visible in every pod
 (privileged mode bypass), providing no isolation between workloads.
 
+### Azure placement groups
+
+On Azure, VMSS (Virtual Machine Scale Sets) with `singlePlacementGroup: true`
+place VMs in the same [placement group][az-ib]. VMs in **different placement
+groups do not share an InfiniBand fabric**, and cross-placement-group RDMA
+traffic fails with transport errors.
+
+This is not detectable from Kubernetes node labels or NVIDIA GFD attributes.
+Without placement group awareness, multi-node NCCL jobs can be scheduled across
+IB fabric boundaries.
+
+dranet queries the Azure Instance Metadata Service (IMDS) at startup and
+attaches two Azure-specific attributes to every device in the node's ResourceSlice:
+
+| Attribute | Source | Example |
+|---|---|---|
+| `azure.dra.net/placementGroupId` | IMDS `compute/placementGroupId` | `739e6cfb-2607-462e-9e2b-21d24b31f5ed` |
+| `azure.dra.net/vmSize` | IMDS `compute/vmSize` | `Standard_ND128isr_GB300_v6` |
+
+[az-ib]: https://learn.microsoft.com/en-us/azure/virtual-machines/setup-infiniband#cluster-configuration-options
+
 ### DRA device attributes
 
 **GPU** (driver: `gpu.nvidia.com`):
@@ -62,7 +92,8 @@ Without this, all four `uverbs*` devices would be visible in every pod
 | pci-0104-00-00-0 | 0104:00:00.0 | mlx5_3 | 1 |
 
 These devices have no `ifName` attribute — IB-only status is derived at runtime
-from `rdmaDevice != "" && ifName == ""`.
+from `rdmaDevice != "" && ifName == ""`. Every device also carries
+`azure.dra.net/placementGroupId` and `azure.dra.net/vmSize`.
 
 See `resourceslice-gpu.yaml` and `resourceslice-dranet.yaml` for the full
 ResourceSlice objects from a live node.
@@ -71,15 +102,16 @@ ResourceSlice objects from a live node.
 
 | File | Description |
 |---|---|
-| `resource-claim-template.yaml` | Three `ResourceClaimTemplate` objects for the three test cases |
+| `resource-claim-template.yaml` | Four `ResourceClaimTemplate` objects for the test cases |
 | `mpi-job.yaml` | `MPIJob` that runs `nccl_tests/all_reduce_perf` across 2 workers |
+| `resourceclaim.yaml` | Live `ResourceClaim` from a scheduled pod (reference) |
 | `resourceslice-gpu.yaml` | Live GPU `ResourceSlice` from a GB300 node (reference) |
 | `resourceslice-dranet.yaml` | Live NIC `ResourceSlice` from a GB300 node (reference) |
 
 ## ResourceClaimTemplates
 
-Three templates are defined, each allocating 1 GPU + N NICs per worker pod.
-Update `mpi-job.yaml` `resourceClaimTemplateName:` to switch between them.
+Four templates are defined. Update `mpi-job.yaml` `resourceClaimTemplateName:`
+to switch between them.
 
 ### `1nic-aligned` — 1 GPU + 1 NIC, same NUMA
 
@@ -140,6 +172,43 @@ distinct devices from the NUMA-0 pool.
 
 GPU 0 (NUMA 0) + mlx5_2 (NUMA 1). **SYS** affinity — cross-NUMA, no GDR path.
 
+### `ib-same-fabric` — same placement group (IB fabric)
+
+```yaml
+- name: nic
+  exactly:
+    deviceClassName: dranet.net
+    selectors:
+    - cel:
+        expression: >-
+          device.attributes["azure.dra.net"]["placementGroupId"] == "<placementGroupId>"
+    - cel:
+        expression: >-
+          device.attributes["dra.net"]["rdma"] == true
+```
+
+Constrains the scheduler to RDMA devices on nodes within the specified
+placement group, preventing cross-fabric scheduling failures. Replace
+`<placementGroupId>` with the value from your cluster's ResourceSlice:
+
+```bash
+kubectl get resourceslice -o json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+seen = set()
+for rs in data['items']:
+    if rs['spec'].get('driver') != 'dra.net': continue
+    node = rs['spec']['nodeName']
+    for d in rs['spec'].get('devices', []):
+        attrs = d.get('attributes', {})
+        pgid = attrs.get('azure.dra.net/placementGroupId', {}).get('string', '')
+        if pgid and (node, pgid) not in seen:
+            seen.add((node, pgid))
+            print(f'{node}: placementGroupId={pgid}')
+            break
+"
+```
+
 ## Usage
 
 ```bash
@@ -150,7 +219,7 @@ kubectl apply --server-side -k "https://github.com/kubeflow/mpi-operator/manifes
 kubectl apply -f resource-claim-template.yaml
 
 # Select a test case: edit mpi-job.yaml resourceClaimTemplateName to one of:
-#   1nic-aligned | 2nic-aligned | 1nic-unaligned
+#   1nic-aligned | 2nic-aligned | 1nic-unaligned | ib-same-fabric
 kubectl apply -f mpi-job.yaml
 
 # Wait for workers then stream launcher logs
@@ -202,3 +271,24 @@ The `2nic-aligned` template uses a single request with `count: 2` and a
 devices — `pci-0101-00-00-0` and `pci-0102-00-00-0` — and dranet injects both
 `uverbs0` and `uverbs1` into the pod. The `count: N` + pool-selector pattern
 is the idiomatic DRA approach for multi-device allocation from a homogeneous group.
+
+## Placement group verification
+
+On a cluster with 2 `Standard_ND128isr_GB300_v6` GPU nodes split across two
+placement groups:
+
+| Node | placementGroupId | IB Devices |
+|---|---|---|
+| vmss000000 | `739e6cfb-2607-462e-9e2b-21d24b31f5ed` | mlx5_0 – mlx5_3 |
+| vmss000001 | `ab1690bb-a478-4039-b89a-8a3f4264d4b4` | mlx5_0 – mlx5_3 |
+
+Confirmed that the two nodes have different `placementGroupId` values and that
+cross-placement-group IB is non-functional:
+
+- **Intra-node `ib_write_bw`**: 449.43 Gb/s (working)
+- **Cross-node `ib_write_bw`** (different placement groups): transport retry counter exceeded, error 12 (broken)
+- **Cross-node NCCL `all_reduce_perf`** (different placement groups): hangs at RDMA data transfer
+
+Using the `ib-same-fabric` template (or adding the `placementGroupId` CEL
+predicate to any other template) constrains the scheduler to a single IB
+fabric and avoids these failures.
