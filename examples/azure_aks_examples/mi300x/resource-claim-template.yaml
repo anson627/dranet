@@ -1,23 +1,7 @@
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: 1gpu-1nic
-spec:
-  spec:
-    devices:
-      requests:
-      - name: nic
-        exactly:
-          deviceClassName: dranet.net
-          count: 1
-          selectors:
-          - cel:
-              expression: 'device.attributes["dra.net"]["rdmaDevice"] == "mlx5_0"'
----
-apiVersion: resource.k8s.io/v1
-kind: ResourceClaimTemplate
-metadata:
-  name: 4gpu-4nic
+  name: 4nic-same-numa
 spec:
   spec:
     devices:
@@ -35,7 +19,25 @@ spec:
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: 8gpu-8nic
+  name: 4nic-cross-numa
+spec:
+  spec:
+    devices:
+      requests:
+      - name: nic
+        exactly:
+          deviceClassName: dranet.net
+          count: 4
+          selectors:
+          - cel:
+              expression: >-
+                device.attributes["dra.net"]["rdma"] == true &&
+                device.attributes["dra.net"]["numaNode"] == 1
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: 8nic-all
 spec:
   spec:
     devices:
