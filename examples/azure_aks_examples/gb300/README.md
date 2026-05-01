@@ -1,19 +1,26 @@
 # AKS GB300 InfiniBand dranet Example
 
-End-to-end example of topologically-aware GPU + InfiniBand NIC allocation using
-[Dynamic Resource Allocation (DRA)](https://kubernetes.io/docs/concepts/scheduling-eviction/dynamic-resource-allocation/)
-on Azure Kubernetes Service (AKS) with [ND GB300-v6 sizes series](https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/gpu-accelerated/nd-gb300-v6-series?tabs=sizebasic).
+End-to-end example of topologically-aware GPU + InfiniBand NIC allocation on
+AKS with the [ND GB300-v6 size series][gb300] (NVIDIA GB300 GPUs + Mellanox
+ConnectX IB-only VFs). Both GPUs and NICs are allocated via DRA
+(`gpu.nvidia.com` + `dra.net`).
 
-Two capabilities are demonstrated:
+See [`../README.md`](../README.md) for cluster prerequisites, dranet-on-Azure
+behavior (IB-only NIC discovery, `placementGroupId`), the shared apply/verify
+flow, and notes common to both AKS examples.
+
+Two GB300-specific capabilities are demonstrated:
 
 1. **IB-only NIC discovery and isolation** — dranet exposes GB300 ConnectX VFs
    (which have no Ethernet netdev) as DRA devices and injects only the allocated
    `/dev/infiniband/uverbsN` into each pod.
-2. **Azure placement group awareness** — dranet exposes the VM's placement
-   group ID as a DRA device attribute, so CEL selectors can constrain a job to
-   a single InfiniBand fabric.
+2. **Azure placement group awareness** — a CEL selector on
+   `azure.dra.net/placementGroupId` constrains a job to a single InfiniBand
+   fabric.
 
-## Context
+[gb300]: https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/gpu-accelerated/nd-gb300-v6-series?tabs=sizebasic
+
+## Node topology
 
 ### VM: ND GB300 v6
 
@@ -36,42 +43,6 @@ NUMA topology (`nvidia-smi topo -m`):
 
 NIC mapping: NIC0=mlx5_0 (NUMA 0), NIC1=mlx5_1 (NUMA 0), NIC2=mlx5_2 (NUMA 1), NIC3=mlx5_3 (NUMA 1)
 
-### IB-only NICs and dranet
-
-The ConnectX VFs on GB300 are in **InfiniBand mode** — they have no Ethernet
-netdev interface. dranet discovers them as IB-only devices by:
-
-1. Skipping IPoIB interfaces during netdev discovery (enabled via
-   `--move-ib-interfaces=false` on the dranet DaemonSet)
-2. Recording the RDMA link name (`rdmaDevice`) on the PCI device; a device is
-   IB-only when it has a non-empty `rdmaDevice` and no `ifName`
-3. At pod start, using the NRI plugin to inject exactly the allocated
-   `/dev/infiniband/uverbsN` character device into the container
-
-Without this, all four `uverbs*` devices would be visible in every pod
-(privileged mode bypass), providing no isolation between workloads.
-
-### Azure placement groups
-
-On Azure, VMSS (Virtual Machine Scale Sets) with `singlePlacementGroup: true`
-place VMs in the same [placement group][az-ib]. VMs in **different placement
-groups do not share an InfiniBand fabric**, and cross-placement-group RDMA
-traffic fails with transport errors.
-
-This is not detectable from Kubernetes node labels or NVIDIA GFD attributes.
-Without placement group awareness, multi-node NCCL jobs can be scheduled across
-IB fabric boundaries.
-
-dranet queries the Azure Instance Metadata Service (IMDS) at startup and
-attaches two Azure-specific attributes to every device in the node's ResourceSlice:
-
-| Attribute | Source | Example |
-|---|---|---|
-| `azure.dra.net/placementGroupId` | IMDS `compute/placementGroupId` | `c6c749e8-a38b-470e-8c94-2a7d00001bf0` |
-| `azure.dra.net/vmSize` | IMDS `compute/vmSize` | `Standard_ND128isr_GB300_v6` |
-
-[az-ib]: https://learn.microsoft.com/en-us/azure/virtual-machines/setup-infiniband#cluster-configuration-options
-
 ### DRA device attributes
 
 **GPU** (driver: `gpu.nvidia.com`):
@@ -93,11 +64,8 @@ attaches two Azure-specific attributes to every device in the node's ResourceSli
 | pci-0104-00-00-0 | 0104:00:00.0 | mlx5_3 | 1 |
 
 These devices have no `ifName` attribute — IB-only status is derived at runtime
-from `rdmaDevice != "" && ifName == ""`. Every device also carries
-`azure.dra.net/placementGroupId` and `azure.dra.net/vmSize`.
-
-See `resourceslice-gpu.yaml` and `resourceslice-dranet.yaml` for the full
-ResourceSlice objects from a live node.
+from `rdmaDevice != "" && ifName == ""`. See `resourceslice-gpu.yaml` and
+`resourceslice-dranet.yaml` for the full ResourceSlice objects from a live node.
 
 ## Files
 
@@ -190,47 +158,9 @@ GPU 0 (NUMA 0) + mlx5_2 (NUMA 1). **SYS** affinity — cross-NUMA, no GDR path.
 
 Constrains the scheduler to RDMA devices on nodes within the specified
 placement group, preventing cross-fabric scheduling failures. Replace
-`<placementGroupId>` with the value from your cluster's ResourceSlice:
-
-```bash
-kubectl get resourceslice -o json | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-seen = set()
-for rs in data['items']:
-    if rs['spec'].get('driver') != 'dra.net': continue
-    node = rs['spec']['nodeName']
-    for d in rs['spec'].get('devices', []):
-        attrs = d.get('attributes', {})
-        pgid = attrs.get('azure.dra.net/placementGroupId', {}).get('string', '')
-        if pgid and (node, pgid) not in seen:
-            seen.add((node, pgid))
-            print(f'{node}: placementGroupId={pgid}')
-            break
-"
-```
-
-## Usage
-
-```bash
-# Install MPI Operator (if not already installed)
-kubectl apply --server-side -k "https://github.com/kubeflow/mpi-operator/manifests/overlays/standalone?ref=v0.7.0"
-
-# Apply device class and templates
-kubectl apply -f resource-claim-template.yaml
-
-# Select a test case: edit mpi-job.yaml resourceClaimTemplateName to one of:
-#   1nic-aligned | 2nic-aligned | 1nic-unaligned | ib-same-fabric
-kubectl apply -f mpi-job.yaml
-
-# Wait for workers then stream launcher logs
-kubectl wait --for=condition=ready pod -l training.kubeflow.org/job-name=nccl-test-dra,training.kubeflow.org/job-role=worker --timeout=300s
-launcher=$(kubectl get pods -l training.kubeflow.org/job-name=nccl-test-dra,training.kubeflow.org/job-role=launcher -o jsonpath='{.items[0].metadata.name}')
-kubectl logs -f "${launcher}"
-
-# Verify device isolation in a worker pod
-kubectl exec nccl-test-dra-worker-0 -- ls /dev/infiniband/
-```
+`<placementGroupId>` with a value published by dranet in your cluster — see
+[the shared README](../README.md#azure-placement-group-and-vm-metadata) for the
+lookup command.
 
 ## Benchmark Results
 
