@@ -1,7 +1,6 @@
 apiVersion: resource.k8s.io/v1
 kind: ResourceSlice
 metadata:
-  creationTimestamp: "2026-04-24T15:37:36Z"
   generateName: aks-gpu-37973606-vmss000000-dra.net-
   generation: 1
   name: aks-gpu-37973606-vmss000000-dra.net-twgcs
