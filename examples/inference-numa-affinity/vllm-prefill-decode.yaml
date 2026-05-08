@@ -70,12 +70,13 @@ data:
     export VLLM_NIXL_SIDE_CHANNEL_PORT=5557
     export UCX_TLS="${UCX_TLS:-^posix}"
     export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
-    # Serve from the local snapshot pre-fetched by the init container. Passing
-    # a local path makes the transformers tokenizer's `is_local` check return
-    # True and short-circuits the buggy HF Hub `model_info()` call inside
-    # `_patch_mistral_regex` (HF returns 500s under load and the worker dies).
-    exec vllm serve /root/.cache/model \
-      --served-model-name "${MODEL}" \
+    # --tokenizer-mode slow bypasses the fast (Rust) tokenizer's
+    # `_patch_mistral_regex`, which makes a HF Hub `model_info()` call to
+    # check `is_base_mistral` and crashes the worker when HF returns a 500.
+    # Random-input bench traffic doesn't go through the tokenizer hot path so
+    # the perf cost is negligible for this demo.
+    exec vllm serve "${MODEL}" \
+      --tokenizer-mode slow \
       --tensor-parallel-size 8 \
       --gpu-memory-utilization 0.90 \
       --max-model-len 32768 \
@@ -89,12 +90,13 @@ data:
     export VLLM_NIXL_SIDE_CHANNEL_PORT=5557
     export UCX_TLS="${UCX_TLS:-^posix}"
     export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
-    # Serve from the local snapshot pre-fetched by the init container. Passing
-    # a local path makes the transformers tokenizer's `is_local` check return
-    # True and short-circuits the buggy HF Hub `model_info()` call inside
-    # `_patch_mistral_regex` (HF returns 500s under load and the worker dies).
-    exec vllm serve /root/.cache/model \
-      --served-model-name "${MODEL}" \
+    # --tokenizer-mode slow bypasses the fast (Rust) tokenizer's
+    # `_patch_mistral_regex`, which makes a HF Hub `model_info()` call to
+    # check `is_base_mistral` and crashes the worker when HF returns a 500.
+    # Random-input bench traffic doesn't go through the tokenizer hot path so
+    # the perf cost is negligible for this demo.
+    exec vllm serve "${MODEL}" \
+      --tokenizer-mode slow \
       --tensor-parallel-size 8 \
       --gpu-memory-utilization 0.90 \
       --max-model-len 32768 \
@@ -231,10 +233,10 @@ spec:
       - labelSelector: { matchLabels: { app: vllm-pd } }
         topologyKey: kubernetes.io/hostname
   initContainers:
-  # Pre-download the model snapshot into a local dir. Passing a local path to
-  # `vllm serve` prevents transformers' Mistral-tokenizer regex patcher from
-  # making an HF Hub `model_info()` call during init (which intermittently
-  # 500s and crashes a TP worker).
+  # Pre-download the model snapshot into the HF cache so the main container's
+  # vllm serve can load weights from disk without hitting HF mid-init.
+  # snapshot_download() retries on transient 500s, which `hf download` does
+  # not do reliably (we hit it during testing).
   - name: hf-fetch
     image: python:3.11-slim
     command: ["/bin/sh","-c"]
@@ -242,10 +244,19 @@ spec:
     - |
       set -eux
       pip install --no-cache-dir 'huggingface_hub' >/dev/null
-      hf download "${MODEL}" --local-dir /root/.cache/model
+      python - <<'PY'
+      import os
+      from huggingface_hub import snapshot_download
+      snapshot_download(
+          os.environ["MODEL"],
+          cache_dir="/root/.cache/huggingface/hub",
+          max_workers=4,
+      )
+      PY
     env:
     - { name: MODEL,    value: google/gemma-4-31B-it }
     - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    - { name: HF_HUB_DOWNLOAD_TIMEOUT, value: "300" }
     volumeMounts:
     - { name: hf-cache, mountPath: /root/.cache }
   containers:
@@ -296,10 +307,10 @@ spec:
       - labelSelector: { matchLabels: { app: vllm-pd } }
         topologyKey: kubernetes.io/hostname
   initContainers:
-  # Pre-download the model snapshot into a local dir. Passing a local path to
-  # `vllm serve` prevents transformers' Mistral-tokenizer regex patcher from
-  # making an HF Hub `model_info()` call during init (which intermittently
-  # 500s and crashes a TP worker).
+  # Pre-download the model snapshot into the HF cache so the main container's
+  # vllm serve can load weights from disk without hitting HF mid-init.
+  # snapshot_download() retries on transient 500s, which `hf download` does
+  # not do reliably (we hit it during testing).
   - name: hf-fetch
     image: python:3.11-slim
     command: ["/bin/sh","-c"]
@@ -307,10 +318,19 @@ spec:
     - |
       set -eux
       pip install --no-cache-dir 'huggingface_hub' >/dev/null
-      hf download "${MODEL}" --local-dir /root/.cache/model
+      python - <<'PY'
+      import os
+      from huggingface_hub import snapshot_download
+      snapshot_download(
+          os.environ["MODEL"],
+          cache_dir="/root/.cache/huggingface/hub",
+          max_workers=4,
+      )
+      PY
     env:
     - { name: MODEL,    value: google/gemma-4-31B-it }
     - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    - { name: HF_HUB_DOWNLOAD_TIMEOUT, value: "300" }
     volumeMounts:
     - { name: hf-cache, mountPath: /root/.cache }
   containers:
