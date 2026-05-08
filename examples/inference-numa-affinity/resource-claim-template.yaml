@@ -1,0 +1,73 @@
+# Two ResourceClaimTemplates that allocate a *full node's worth* of devices to
+# a single pod for prefill/decode-disaggregated vLLM serving.
+#
+# Topology assumed (e.g. Azure ND H100 v5: 8 x H100 80GB, 8 x ConnectX VFs):
+#   - 8 GPUs per node, split 4 + 4 across NUMA 0 / NUMA 1
+#   - 8 RDMA NICs per node, split 4 + 4 across NUMA 0 / NUMA 1
+#
+# The interesting demo question: does the *NIC selection* sent to vLLM matter
+# for prefill -> decode KV cache transfer over RDMA? Two templates make the
+# answer measurable in TTFT / TPOT:
+#
+#   pd-aligned         : 8 GPUs + 8 NICs (4 NUMA 0 + 4 NUMA 1).
+#                        Every GPU has a same-NUMA NIC -> NIXL/UCX uses
+#                        GPUDirect RDMA on every rail, full fabric bandwidth.
+#
+#   pd-half-bandwidth  : 8 GPUs + 4 NICs (NUMA 0 only).
+#                        4 GPUs on NUMA 1 must reach NICs on NUMA 0 ->
+#                        cross-socket DMA, half the aggregate RDMA bandwidth.
+#                        This is what you get from a scheduler that picks
+#                        any free NICs without joint GPU/NIC NUMA awareness.
+#
+# Why two requests in pd-aligned (not one with count: 8)?
+#   The dra.net/numaNode attribute lets us *prove* a balanced layout. A single
+#   `count: 8` request with no NUMA selector would still allocate all 8 NICs
+#   on this SKU (only 8 exist), but DRA can't enforce the 4+4 split if more
+#   NICs were ever present. Splitting the request makes the contract explicit.
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: pd-aligned
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpus
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          count: 8
+      - name: nics-numa0
+        exactly:
+          deviceClassName: dra.net
+          count: 4
+          selectors:
+          - cel:
+              expression: 'device.attributes["dra.net"]["rdma"] == true && device.attributes["dra.net"]["numaNode"] == 0'
+      - name: nics-numa1
+        exactly:
+          deviceClassName: dra.net
+          count: 4
+          selectors:
+          - cel:
+              expression: 'device.attributes["dra.net"]["rdma"] == true && device.attributes["dra.net"]["numaNode"] == 1'
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  name: pd-half-bandwidth
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpus
+        exactly:
+          deviceClassName: gpu.nvidia.com
+          count: 8
+      - name: nics-numa0-only
+        exactly:
+          deviceClassName: dra.net
+          count: 4
+          selectors:
+          - cel:
+              expression: 'device.attributes["dra.net"]["rdma"] == true && device.attributes["dra.net"]["numaNode"] == 0'

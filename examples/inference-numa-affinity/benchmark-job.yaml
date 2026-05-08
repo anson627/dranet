@@ -1,0 +1,62 @@
+# Hits the P/D router with realistic chat-style traffic and prints a
+# TTFT / TPOT / ITL / throughput summary.
+#
+# Re-apply once per ResourceClaimTemplate (`pd-aligned`, `pd-half-bandwidth`)
+# and compare. Long input + short output makes per-request KV transfer the
+# dominant TTFT contributor, which is what NIC bandwidth and NIC<->GPU NUMA
+# placement actually drive.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vllm-bench
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: bench
+        image: vllm/vllm-openai:gemma4
+        env:
+        - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+        - { name: MODEL,    value: google/gemma-4-31B-it }
+        command: ["/bin/bash", "-euxo", "pipefail", "-c"]
+        args:
+        - |
+          until curl -sf http://vllm-router:8000/v1/models > /dev/null; do
+            echo "waiting for router..."; sleep 10
+          done
+
+          # 32k-token prompt drives the prefill -> decode KV transfer hard;
+          # 256 output tokens keeps the decode-phase work bounded. The long
+          # input is what makes NIC bandwidth visible in TTFT for a 31B model.
+          vllm bench serve \
+            --backend openai-chat \
+            --base-url http://vllm-router:8000 \
+            --endpoint /v1/chat/completions \
+            --model "${MODEL}" \
+            --dataset-name random \
+            --random-input-len 32768 \
+            --random-output-len 256 \
+            --num-prompts 100 \
+            --max-concurrency 4 \
+            --percentile-metrics ttft,tpot,itl,e2el \
+            --metric-percentiles 50,90,99 \
+            --save-result --result-dir /results
+
+          echo "==== summary ===="
+          ls /results
+          cat /results/*.json | python -c '
+          import json,sys
+          d=json.load(sys.stdin)
+          for k in ("mean_ttft_ms","median_ttft_ms","p99_ttft_ms",
+                    "mean_tpot_ms","median_tpot_ms","p99_tpot_ms",
+                    "mean_itl_ms","median_itl_ms","p99_itl_ms",
+                    "request_throughput","output_throughput"):
+              if k in d: print(f"{k}: {d[k]:.2f}")
+          '
+        volumeMounts:
+        - { name: results, mountPath: /results }
+      volumes:
+      - { name: results, emptyDir: {} }

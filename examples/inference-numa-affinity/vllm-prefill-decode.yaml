@@ -1,0 +1,364 @@
+# Disaggregated prefill/decode serving of google/gemma-4-31B-it
+# across two GPU nodes connected by an RDMA fabric.
+#
+#   vllm-prefill (node A):  8 GPUs (TP=8), holds full BF16 copy of weights,
+#                           handles prompt prefill, exports KV blocks via NIXL.
+#   vllm-decode  (node B):  8 GPUs (TP=8), holds full BF16 copy of weights,
+#                           imports KV blocks from prefill, generates tokens.
+#   vllm-router  (CPU):     OpenAI-compatible front door. Forwards each
+#                           request first to prefill (max_tokens=1) to populate
+#                           the KV cache, then streams the decode response.
+#
+# Each vLLM pod claims one ResourceClaim. Edit `resourceClaimTemplateName` on
+# BOTH pods to switch test case (`pd-aligned` vs `pd-half-bandwidth`).
+#
+# 31B at TP=8 leaves the per-GPU weight footprint tiny (~8 GB) -- intentional.
+# We use TP=8 so the per-rank KV slice is sent over a dedicated NIC, exercising
+# all 8 RDMA rails and exposing the NIC-NUMA placement signal in TTFT. Long
+# prompts (--max-model-len 32768) make the prefill->decode KV transfer big
+# enough to dominate TTFT.
+#
+# Prereqs:
+#   - Secret `hf-token` with key `token`. google/gemma-4-31B-it is Apache 2.0
+#     but HF still requires you to accept Google's usage notice once on the
+#     model page (instant approval, no waiting list).
+#   - Two GPU nodes labeled identically; the pods land on different nodes via
+#     podAntiAffinity on the shared `app: vllm-pd` label.
+#
+# Note on model caching: the HF cache is an emptyDir, so the ~62 GB of weights
+# is re-fetched each time a pod is created. If your cluster has a CSI driver
+# that can dynamically provision ReadWriteOnce volumes on the GPU nodes,
+# replace each `hf-cache` emptyDir with a PersistentVolumeClaim (one per pod)
+# so the download only happens once per node.
+---
+apiVersion: v1
+kind: Service
+metadata: { name: vllm-prefill }
+spec:
+  selector: { app: vllm-pd, role: prefill }
+  clusterIP: None                   # headless; router needs the pod IP for NIXL
+  ports:
+  - { name: http, port: 8100, targetPort: 8100 }
+  - { name: nixl, port: 5557, targetPort: 5557 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: vllm-decode }
+spec:
+  selector: { app: vllm-pd, role: decode }
+  clusterIP: None
+  ports:
+  - { name: http, port: 8200, targetPort: 8200 }
+  - { name: nixl, port: 5557, targetPort: 5557 }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: vllm-router }
+spec:
+  selector: { app: vllm-pd, role: router }
+  ports:
+  - { name: http, port: 8000, targetPort: 8000 }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: vllm-pd-scripts }
+data:
+  prefill.sh: |
+    #!/bin/bash
+    set -euxo pipefail
+    export VLLM_NIXL_SIDE_CHANNEL_HOST="${POD_IP}"
+    export VLLM_NIXL_SIDE_CHANNEL_PORT=5557
+    export UCX_TLS="${UCX_TLS:-^posix}"
+    export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
+    # Serve from the local snapshot pre-fetched by the init container. Passing
+    # a local path makes the transformers tokenizer's `is_local` check return
+    # True and short-circuits the buggy HF Hub `model_info()` call inside
+    # `_patch_mistral_regex` (HF returns 500s under load and the worker dies).
+    exec vllm serve /root/.cache/model \
+      --served-model-name "${MODEL}" \
+      --tensor-parallel-size 8 \
+      --gpu-memory-utilization 0.90 \
+      --max-model-len 32768 \
+      --port 8100 \
+      --host 0.0.0.0 \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_load_failure_policy":"fail"}'
+  decode.sh: |
+    #!/bin/bash
+    set -euxo pipefail
+    export VLLM_NIXL_SIDE_CHANNEL_HOST="${POD_IP}"
+    export VLLM_NIXL_SIDE_CHANNEL_PORT=5557
+    export UCX_TLS="${UCX_TLS:-^posix}"
+    export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
+    # Serve from the local snapshot pre-fetched by the init container. Passing
+    # a local path makes the transformers tokenizer's `is_local` check return
+    # True and short-circuits the buggy HF Hub `model_info()` call inside
+    # `_patch_mistral_regex` (HF returns 500s under load and the worker dies).
+    exec vllm serve /root/.cache/model \
+      --served-model-name "${MODEL}" \
+      --tensor-parallel-size 8 \
+      --gpu-memory-utilization 0.90 \
+      --max-model-len 32768 \
+      --port 8200 \
+      --host 0.0.0.0 \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_both","kv_load_failure_policy":"fail"}'
+  router.sh: |
+    #!/bin/bash
+    set -euxo pipefail
+    pip install --no-cache-dir 'fastapi' 'uvicorn[standard]' 'httpx>=0.27' >/dev/null
+    until getent hosts vllm-prefill > /dev/null && getent hosts vllm-decode > /dev/null; do
+      echo "waiting for prefill/decode service DNS..."; sleep 3
+    done
+    # The python:slim image has no curl, so probe via urllib instead.
+    probe() { python -c "import sys,urllib.request as u; u.urlopen(sys.argv[1], timeout=5)" "$1"; }
+    until probe http://vllm-prefill:8100/v1/models 2>/dev/null; do
+      echo "waiting for prefill /v1/models..."; sleep 15
+    done
+    until probe http://vllm-decode:8200/v1/models 2>/dev/null; do
+      echo "waiting for decode /v1/models..."; sleep 15
+    done
+    exec python /scripts/proxy.py \
+      --host 0.0.0.0 --port 8000 \
+      --prefiller-host vllm-prefill --prefiller-port 8100 \
+      --decoder-host  vllm-decode  --decoder-port  8200
+  proxy.py: |
+    # Minimal P/D proxy adapted from vLLM's tests/v1/kv_connector/nixl_integration/toy_proxy_server.py
+    # Forwards the request to prefill with max_tokens=1, lifts the returned
+    # kv_transfer_params, then streams the decode response back to the client.
+    import argparse, itertools, logging, os, uuid
+    from contextlib import asynccontextmanager
+    import httpx
+    from fastapi import FastAPI, Request
+    from fastapi.responses import StreamingResponse
+
+    logger = logging.getLogger("pd-proxy")
+    logger.setLevel(logging.INFO)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        app.state.prefill = [{"client": httpx.AsyncClient(timeout=None,
+            base_url=f"http://{h}:{p}/v1",
+            limits=httpx.Limits(max_connections=None, max_keepalive_connections=None)),
+            "host": h, "port": p}
+            for h, p in zip(args.prefiller_hosts, args.prefiller_ports)]
+        app.state.decode  = [{"client": httpx.AsyncClient(timeout=None,
+            base_url=f"http://{h}:{p}/v1",
+            limits=httpx.Limits(max_connections=None, max_keepalive_connections=None)),
+            "host": h, "port": p}
+            for h, p in zip(args.decoder_hosts, args.decoder_ports)]
+        app.state.pi = itertools.cycle(range(len(app.state.prefill)))
+        app.state.di = itertools.cycle(range(len(app.state.decode)))
+        yield
+        for c in app.state.prefill + app.state.decode:
+            await c["client"].aclose()
+
+    app = FastAPI(lifespan=lifespan)
+
+    async def _prefill(client, endpoint, req, rid):
+        d = req.copy()
+        d["kv_transfer_params"] = {
+            "do_remote_decode": True, "do_remote_prefill": False,
+            "remote_engine_id": None, "remote_block_ids": None,
+            "remote_host": None, "remote_port": None,
+        }
+        d["stream"] = False
+        d["max_tokens"] = 1
+        if "max_completion_tokens" in d: d["max_completion_tokens"] = 1
+        d.pop("stream_options", None)
+        mt  = d.pop("min_tokens", None)
+        mct = d.pop("min_completion_tokens", None)
+        headers = {"X-Request-Id": rid}
+        r = await client["client"].post(endpoint, json=d, headers=headers)
+        r.raise_for_status()
+        await r.aread()
+        d["min_tokens"] = mt; d["min_completion_tokens"] = mct
+        return r, d
+
+    async def _stream(client, endpoint, req, rid):
+        headers = {"X-Request-Id": rid}
+        async with client["client"].stream("POST", endpoint, json=req, headers=headers) as r:
+            r.raise_for_status()
+            async for chunk in r.aiter_bytes():
+                yield chunk
+
+    async def _handle(api, request):
+        body = await request.json()
+        rid  = str(uuid.uuid4())
+        p = app.state.prefill[next(app.state.pi)]
+        d = app.state.decode [next(app.state.di)]
+        pre, body = await _prefill(p, api, body, rid)
+        kv = pre.json().get("kv_transfer_params", {})
+        await pre.aclose()
+        if kv: body["kv_transfer_params"] = kv
+        return StreamingResponse(_stream(d, api, body, rid), media_type="application/json")
+
+    @app.post("/v1/completions")
+    async def comp(request: Request): return await _handle("/completions", request)
+    @app.post("/v1/chat/completions")
+    async def chat(request: Request): return await _handle("/chat/completions", request)
+    @app.get("/v1/models")
+    async def models():
+        # Pass through to the prefill backend so clients can discover the model id.
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{app.state.prefill[0]['client'].base_url}/models")
+            return r.json()
+
+    if __name__ == "__main__":
+        ap = argparse.ArgumentParser()
+        ap.add_argument("--host", default="0.0.0.0")
+        ap.add_argument("--port", type=int, default=8000)
+        ap.add_argument("--prefiller-hosts", nargs="+", default=["vllm-prefill"])
+        ap.add_argument("--prefiller-ports", nargs="+", type=int, default=[8100])
+        ap.add_argument("--decoder-hosts",   nargs="+", default=["vllm-decode"])
+        ap.add_argument("--decoder-ports",   nargs="+", type=int, default=[8200])
+        args = ap.parse_args()
+        import uvicorn
+        uvicorn.run(app, host=args.host, port=args.port)
+---
+# ---------------- Prefill pod (8 GPUs + N NICs on node A) ----------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-prefill
+  labels: { app: vllm-pd, role: prefill }
+spec:
+  restartPolicy: Never
+  resourceClaims:
+  - name: devices
+    resourceClaimTemplateName: pd-aligned   # EDIT to switch test case
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector: { matchLabels: { app: vllm-pd } }
+        topologyKey: kubernetes.io/hostname
+  initContainers:
+  # Pre-download the model snapshot into a local dir. Passing a local path to
+  # `vllm serve` prevents transformers' Mistral-tokenizer regex patcher from
+  # making an HF Hub `model_info()` call during init (which intermittently
+  # 500s and crashes a TP worker).
+  - name: hf-fetch
+    image: python:3.11-slim
+    command: ["/bin/sh","-c"]
+    args:
+    - |
+      set -eux
+      pip install --no-cache-dir 'huggingface_hub' >/dev/null
+      hf download "${MODEL}" --local-dir /root/.cache/model
+    env:
+    - { name: MODEL,    value: google/gemma-4-31B-it }
+    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    volumeMounts:
+    - { name: hf-cache, mountPath: /root/.cache }
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:gemma4
+    command: ["/bin/bash", "/scripts/prefill.sh"]
+    env:
+    - { name: MODEL,    value: google/gemma-4-31B-it }
+    - { name: HF_HOME,  value: /root/.cache/huggingface }
+    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    - { name: NCCL_IB_HCA,         value: "mlx5" }
+    - { name: NCCL_IB_DATA_DIRECT, value: "0" }
+    - { name: NCCL_DEBUG,          value: INFO }
+    - { name: POD_IP, valueFrom: { fieldRef: { fieldPath: status.podIP } } }
+    - { name: VLLM_HOST_IP, valueFrom: { fieldRef: { fieldPath: status.podIP } } }
+    ports:
+    - { name: http, containerPort: 8100 }
+    - { name: nixl, containerPort: 5557 }
+    resources:
+      claims:
+      - name: devices
+      limits: { nvidia.com/gpu: "0" }   # GPUs come from DRA, not the device plugin
+    volumeMounts:
+    - { name: scripts,  mountPath: /scripts }
+    - { name: hf-cache, mountPath: /root/.cache/huggingface }
+    - { name: shm,      mountPath: /dev/shm }
+    securityContext:
+      capabilities: { add: ["IPC_LOCK"] }
+  volumes:
+  - { name: scripts,  configMap: { name: vllm-pd-scripts, defaultMode: 0755 } }
+  - { name: hf-cache, emptyDir: { sizeLimit: 100Gi } }
+  - { name: shm,      emptyDir: { medium: Memory, sizeLimit: 64Gi } }
+---
+# ---------------- Decode pod (8 GPUs + N NICs on node B) -----------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-decode
+  labels: { app: vllm-pd, role: decode }
+spec:
+  restartPolicy: Never
+  resourceClaims:
+  - name: devices
+    resourceClaimTemplateName: pd-aligned   # EDIT to switch test case
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector: { matchLabels: { app: vllm-pd } }
+        topologyKey: kubernetes.io/hostname
+  initContainers:
+  # Pre-download the model snapshot into a local dir. Passing a local path to
+  # `vllm serve` prevents transformers' Mistral-tokenizer regex patcher from
+  # making an HF Hub `model_info()` call during init (which intermittently
+  # 500s and crashes a TP worker).
+  - name: hf-fetch
+    image: python:3.11-slim
+    command: ["/bin/sh","-c"]
+    args:
+    - |
+      set -eux
+      pip install --no-cache-dir 'huggingface_hub' >/dev/null
+      hf download "${MODEL}" --local-dir /root/.cache/model
+    env:
+    - { name: MODEL,    value: google/gemma-4-31B-it }
+    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    volumeMounts:
+    - { name: hf-cache, mountPath: /root/.cache }
+  containers:
+  - name: vllm
+    image: vllm/vllm-openai:gemma4
+    command: ["/bin/bash", "/scripts/decode.sh"]
+    env:
+    - { name: MODEL,    value: google/gemma-4-31B-it }
+    - { name: HF_HOME,  value: /root/.cache/huggingface }
+    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    - { name: NCCL_IB_HCA,         value: "mlx5" }
+    - { name: NCCL_IB_DATA_DIRECT, value: "0" }
+    - { name: NCCL_DEBUG,          value: INFO }
+    - { name: POD_IP, valueFrom: { fieldRef: { fieldPath: status.podIP } } }
+    - { name: VLLM_HOST_IP, valueFrom: { fieldRef: { fieldPath: status.podIP } } }
+    ports:
+    - { name: http, containerPort: 8200 }
+    - { name: nixl, containerPort: 5557 }
+    resources:
+      claims:
+      - name: devices
+      limits: { nvidia.com/gpu: "0" }
+    volumeMounts:
+    - { name: scripts,  mountPath: /scripts }
+    - { name: hf-cache, mountPath: /root/.cache/huggingface }
+    - { name: shm,      mountPath: /dev/shm }
+    securityContext:
+      capabilities: { add: ["IPC_LOCK"] }
+  volumes:
+  - { name: scripts,  configMap: { name: vllm-pd-scripts, defaultMode: 0755 } }
+  - { name: hf-cache, emptyDir: { sizeLimit: 100Gi } }
+  - { name: shm,      emptyDir: { medium: Memory, sizeLimit: 64Gi } }
+---
+# ---------------- Router pod (CPU only) ----------------------------------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: vllm-router
+  labels: { app: vllm-pd, role: router }
+spec:
+  restartPolicy: Never
+  containers:
+  - name: router
+    image: python:3.11-slim
+    command: ["/bin/bash", "/scripts/router.sh"]
+    ports:
+    - { name: http, containerPort: 8000 }
+    volumeMounts:
+    - { name: scripts, mountPath: /scripts }
+  volumes:
+  - { name: scripts, configMap: { name: vllm-pd-scripts, defaultMode: 0755 } }
