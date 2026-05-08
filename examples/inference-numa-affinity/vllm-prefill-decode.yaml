@@ -25,11 +25,69 @@
 #   - Two GPU nodes labeled identically; the pods land on different nodes via
 #     podAntiAffinity on the shared `app: vllm-pd` label.
 #
-# Note on model caching: the HF cache is an emptyDir, so the ~62 GB of weights
-# is re-fetched each time a pod is created. If your cluster has a CSI driver
-# that can dynamically provision ReadWriteOnce volumes on the GPU nodes,
-# replace each `hf-cache` emptyDir with a PersistentVolumeClaim (one per pod)
-# so the download only happens once per node.
+# Model caching: the `model-warmer` DaemonSet (defined first in this file)
+# downloads the model into hostPath /var/lib/models/google/gemma-4-31B-it on
+# each GPU node exactly once. The vllm-prefill / vllm-decode pods mount that
+# hostPath and wait on a `.ready` sentinel before starting `vllm serve`, so
+# pod restarts boot in seconds instead of redownloading 62 GB.
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: model-warmer
+spec:
+  selector:
+    matchLabels: { app: model-warmer }
+  template:
+    metadata:
+      labels: { app: model-warmer }
+    spec:
+      # Only run on GPU nodes. Adjust the selector to match your cluster
+      # (e.g. agentpool=gpu on AKS, gpu=true on GKE).
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+      - { key: nvidia.com/gpu, effect: NoSchedule, operator: Exists }
+      initContainers:
+      - name: hf-fetch
+        image: python:3.11-slim
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          set -eux
+          DEST="/models/${MODEL}"
+          if [ -f "${DEST}/.ready" ]; then
+            echo "model already cached at ${DEST}"; exit 0
+          fi
+          mkdir -p "${DEST}"
+          pip install --no-cache-dir 'huggingface_hub' >/dev/null
+          python - <<'PY'
+          import os
+          from huggingface_hub import snapshot_download
+          snapshot_download(
+              os.environ["MODEL"],
+              local_dir="/models/" + os.environ["MODEL"],
+              max_workers=4,
+          )
+          PY
+          touch "${DEST}/.ready"
+        env:
+        - { name: MODEL, value: google/gemma-4-31B-it }
+        - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+        - { name: HF_HUB_DOWNLOAD_TIMEOUT, value: "300" }
+        # The Xet chunked-storage endpoint (xet-read-token) intermittently
+        # 500s for Gemma 4 weights. Disable to use the legacy CDN path.
+        - { name: HF_HUB_DISABLE_XET, value: "1" }
+        volumeMounts:
+        - { name: models, mountPath: /models }
+      containers:
+      # Idle pad once the download is complete so the DS pod stays Ready and
+      # the model files keep their hostPath bind-mount available to vllm pods.
+      - name: pause
+        image: registry.k8s.io/pause:3.9
+      volumes:
+      - name: models
+        hostPath: { path: /var/lib/models, type: DirectoryOrCreate }
 ---
 apiVersion: v1
 kind: Service
@@ -70,13 +128,13 @@ data:
     export VLLM_NIXL_SIDE_CHANNEL_PORT=5557
     export UCX_TLS="${UCX_TLS:-^posix}"
     export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
-    # --tokenizer-mode slow bypasses the fast (Rust) tokenizer's
-    # `_patch_mistral_regex`, which makes a HF Hub `model_info()` call to
-    # check `is_base_mistral` and crashes the worker when HF returns a 500.
-    # Random-input bench traffic doesn't go through the tokenizer hot path so
-    # the perf cost is negligible for this demo.
-    exec vllm serve "${MODEL}" \
-      --tokenizer-mode slow \
+    # Serve from the snapshot pre-fetched by the init container. Passing a
+    # local path makes transformers' `is_local=True` short-circuit the
+    # `_patch_mistral_regex` -> HF `model_info()` call (which 500s under load
+    # and crashes a TP worker). --served-model-name keeps the OpenAI-API
+    # advertised model id stable for the benchmark client.
+    exec vllm serve "/models/${MODEL}" \
+      --served-model-name "${MODEL}" \
       --tensor-parallel-size 8 \
       --gpu-memory-utilization 0.90 \
       --max-model-len 32768 \
@@ -90,13 +148,13 @@ data:
     export VLLM_NIXL_SIDE_CHANNEL_PORT=5557
     export UCX_TLS="${UCX_TLS:-^posix}"
     export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
-    # --tokenizer-mode slow bypasses the fast (Rust) tokenizer's
-    # `_patch_mistral_regex`, which makes a HF Hub `model_info()` call to
-    # check `is_base_mistral` and crashes the worker when HF returns a 500.
-    # Random-input bench traffic doesn't go through the tokenizer hot path so
-    # the perf cost is negligible for this demo.
-    exec vllm serve "${MODEL}" \
-      --tokenizer-mode slow \
+    # Serve from the snapshot pre-fetched by the init container. Passing a
+    # local path makes transformers' `is_local=True` short-circuit the
+    # `_patch_mistral_regex` -> HF `model_info()` call (which 500s under load
+    # and crashes a TP worker). --served-model-name keeps the OpenAI-API
+    # advertised model id stable for the benchmark client.
+    exec vllm serve "/models/${MODEL}" \
+      --served-model-name "${MODEL}" \
       --tensor-parallel-size 8 \
       --gpu-memory-utilization 0.90 \
       --max-model-len 32768 \
@@ -156,7 +214,11 @@ data:
     app = FastAPI(lifespan=lifespan)
 
     async def _prefill(client, endpoint, req, rid):
-        d = req.copy()
+        # Build a prefill-only variant of the request: max_tokens=1, no
+        # streaming, drop min_tokens/min_completion_tokens (P doesn't accept
+        # them when paired with kv_transfer). Leaves the original `req` dict
+        # untouched so the caller can forward the unmodified request to D.
+        d = dict(req)
         d["kv_transfer_params"] = {
             "do_remote_decode": True, "do_remote_prefill": False,
             "remote_engine_id": None, "remote_block_ids": None,
@@ -166,14 +228,12 @@ data:
         d["max_tokens"] = 1
         if "max_completion_tokens" in d: d["max_completion_tokens"] = 1
         d.pop("stream_options", None)
-        mt  = d.pop("min_tokens", None)
-        mct = d.pop("min_completion_tokens", None)
-        headers = {"X-Request-Id": rid}
-        r = await client["client"].post(endpoint, json=d, headers=headers)
+        d.pop("min_tokens", None)
+        d.pop("min_completion_tokens", None)
+        r = await client["client"].post(endpoint, json=d, headers={"X-Request-Id": rid})
         r.raise_for_status()
         await r.aread()
-        d["min_tokens"] = mt; d["min_completion_tokens"] = mct
-        return r, d
+        return r
 
     async def _stream(client, endpoint, req, rid):
         headers = {"X-Request-Id": rid}
@@ -187,9 +247,11 @@ data:
         rid  = str(uuid.uuid4())
         p = app.state.prefill[next(app.state.pi)]
         d = app.state.decode [next(app.state.di)]
-        pre, body = await _prefill(p, api, body, rid)
+        pre = await _prefill(p, api, body, rid)
         kv = pre.json().get("kv_transfer_params", {})
         await pre.aclose()
+        # Forward the *original* request to decode (full max_tokens, original
+        # streaming flag, etc.), only injecting the KV handle from prefill.
         if kv: body["kv_transfer_params"] = kv
         return StreamingResponse(_stream(d, api, body, rid), media_type="application/json")
 
@@ -200,9 +262,9 @@ data:
     @app.get("/v1/models")
     async def models():
         # Pass through to the prefill backend so clients can discover the model id.
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(f"{app.state.prefill[0]['client'].base_url}/models")
-            return r.json()
+        c = app.state.prefill[0]["client"]
+        r = await c.get("/models")
+        return r.json()
 
     if __name__ == "__main__":
         ap = argparse.ArgumentParser()
@@ -233,40 +295,27 @@ spec:
       - labelSelector: { matchLabels: { app: vllm-pd } }
         topologyKey: kubernetes.io/hostname
   initContainers:
-  # Pre-download the model snapshot into the HF cache so the main container's
-  # vllm serve can load weights from disk without hitting HF mid-init.
-  # snapshot_download() retries on transient 500s, which `hf download` does
-  # not do reliably (we hit it during testing).
-  - name: hf-fetch
-    image: python:3.11-slim
+  # Block on the per-node DaemonSet finishing the model download. The DS
+  # writes /models/<MODEL>/.ready when snapshot_download() completes.
+  - name: wait-for-model
+    image: busybox:1.36
     command: ["/bin/sh","-c"]
     args:
     - |
-      set -eux
-      pip install --no-cache-dir 'huggingface_hub' >/dev/null
-      python - <<'PY'
-      import os
-      from huggingface_hub import snapshot_download
-      snapshot_download(
-          os.environ["MODEL"],
-          cache_dir="/root/.cache/huggingface/hub",
-          max_workers=4,
-      )
-      PY
-    env:
-    - { name: MODEL,    value: google/gemma-4-31B-it }
-    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
-    - { name: HF_HUB_DOWNLOAD_TIMEOUT, value: "300" }
+      until [ -f /models/google/gemma-4-31B-it/.ready ]; do
+        echo "waiting for model-warmer DaemonSet to finish on this node..."
+        sleep 15
+      done
+      echo "model is cached on this node"
     volumeMounts:
-    - { name: hf-cache, mountPath: /root/.cache }
+    - { name: model-cache, mountPath: /models, readOnly: true }
   containers:
   - name: vllm
     image: vllm/vllm-openai:gemma4
     command: ["/bin/bash", "/scripts/prefill.sh"]
     env:
     - { name: MODEL,    value: google/gemma-4-31B-it }
-    - { name: HF_HOME,  value: /root/.cache/huggingface }
-    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    # No HF_TOKEN here — weights are already on disk via the model-warmer DS.
     - { name: NCCL_IB_HCA,         value: "mlx5" }
     - { name: NCCL_IB_DATA_DIRECT, value: "0" }
     - { name: NCCL_DEBUG,          value: INFO }
@@ -281,13 +330,13 @@ spec:
       limits: { nvidia.com/gpu: "0" }   # GPUs come from DRA, not the device plugin
     volumeMounts:
     - { name: scripts,  mountPath: /scripts }
-    - { name: hf-cache, mountPath: /root/.cache/huggingface }
+    - { name: model-cache, mountPath: /models, readOnly: true }
     - { name: shm,      mountPath: /dev/shm }
     securityContext:
       capabilities: { add: ["IPC_LOCK"] }
   volumes:
   - { name: scripts,  configMap: { name: vllm-pd-scripts, defaultMode: 0755 } }
-  - { name: hf-cache, emptyDir: { sizeLimit: 100Gi } }
+  - { name: model-cache, hostPath: { path: /var/lib/models, type: DirectoryOrCreate } }
   - { name: shm,      emptyDir: { medium: Memory, sizeLimit: 64Gi } }
 ---
 # ---------------- Decode pod (8 GPUs + N NICs on node B) -----------------
@@ -307,40 +356,27 @@ spec:
       - labelSelector: { matchLabels: { app: vllm-pd } }
         topologyKey: kubernetes.io/hostname
   initContainers:
-  # Pre-download the model snapshot into the HF cache so the main container's
-  # vllm serve can load weights from disk without hitting HF mid-init.
-  # snapshot_download() retries on transient 500s, which `hf download` does
-  # not do reliably (we hit it during testing).
-  - name: hf-fetch
-    image: python:3.11-slim
+  # Block on the per-node DaemonSet finishing the model download. The DS
+  # writes /models/<MODEL>/.ready when snapshot_download() completes.
+  - name: wait-for-model
+    image: busybox:1.36
     command: ["/bin/sh","-c"]
     args:
     - |
-      set -eux
-      pip install --no-cache-dir 'huggingface_hub' >/dev/null
-      python - <<'PY'
-      import os
-      from huggingface_hub import snapshot_download
-      snapshot_download(
-          os.environ["MODEL"],
-          cache_dir="/root/.cache/huggingface/hub",
-          max_workers=4,
-      )
-      PY
-    env:
-    - { name: MODEL,    value: google/gemma-4-31B-it }
-    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
-    - { name: HF_HUB_DOWNLOAD_TIMEOUT, value: "300" }
+      until [ -f /models/google/gemma-4-31B-it/.ready ]; do
+        echo "waiting for model-warmer DaemonSet to finish on this node..."
+        sleep 15
+      done
+      echo "model is cached on this node"
     volumeMounts:
-    - { name: hf-cache, mountPath: /root/.cache }
+    - { name: model-cache, mountPath: /models, readOnly: true }
   containers:
   - name: vllm
     image: vllm/vllm-openai:gemma4
     command: ["/bin/bash", "/scripts/decode.sh"]
     env:
     - { name: MODEL,    value: google/gemma-4-31B-it }
-    - { name: HF_HOME,  value: /root/.cache/huggingface }
-    - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
+    # No HF_TOKEN here — weights are already on disk via the model-warmer DS.
     - { name: NCCL_IB_HCA,         value: "mlx5" }
     - { name: NCCL_IB_DATA_DIRECT, value: "0" }
     - { name: NCCL_DEBUG,          value: INFO }
@@ -355,13 +391,13 @@ spec:
       limits: { nvidia.com/gpu: "0" }
     volumeMounts:
     - { name: scripts,  mountPath: /scripts }
-    - { name: hf-cache, mountPath: /root/.cache/huggingface }
+    - { name: model-cache, mountPath: /models, readOnly: true }
     - { name: shm,      mountPath: /dev/shm }
     securityContext:
       capabilities: { add: ["IPC_LOCK"] }
   volumes:
   - { name: scripts,  configMap: { name: vllm-pd-scripts, defaultMode: 0755 } }
-  - { name: hf-cache, emptyDir: { sizeLimit: 100Gi } }
+  - { name: model-cache, hostPath: { path: /var/lib/models, type: DirectoryOrCreate } }
   - { name: shm,      emptyDir: { medium: Memory, sizeLimit: 64Gi } }
 ---
 # ---------------- Router pod (CPU only) ----------------------------------

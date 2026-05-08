@@ -15,12 +15,15 @@ spec:
   template:
     spec:
       restartPolicy: Never
+      # Pin to a GPU node only because that's where the model-warmer DaemonSet
+      # has the local snapshot. The bench itself doesn't need a GPU.
+      nodeSelector: { nvidia.com/gpu.present: "true" }
+      tolerations: [{ key: nvidia.com/gpu, effect: NoSchedule, operator: Exists }]
       containers:
       - name: bench
         image: vllm/vllm-openai:gemma4
         env:
-        - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
-        - { name: MODEL,    value: google/gemma-4-31B-it }
+        - { name: MODEL, value: google/gemma-4-31B-it }
         command: ["/bin/bash", "-euxo", "pipefail", "-c"]
         args:
         - |
@@ -28,16 +31,19 @@ spec:
             echo "waiting for router..."; sleep 10
           done
 
-          # 32k-token prompt drives the prefill -> decode KV transfer hard;
-          # 256 output tokens keeps the decode-phase work bounded. The long
-          # input is what makes NIC bandwidth visible in TTFT for a 31B model.
+          # 28 k-token prompt drives the prefill -> decode KV transfer hard;
+          # 256 output tokens keeps the decode-phase work bounded. Stays under
+          # vllm's --max-model-len 32768 with margin for chat-template tokens.
+          # Long input is what makes NIC bandwidth visible in TTFT for a 31B
+          # model.
           vllm bench serve \
             --backend openai-chat \
             --base-url http://vllm-router:8000 \
             --endpoint /v1/chat/completions \
             --model "${MODEL}" \
+            --tokenizer "/models/${MODEL}" \
             --dataset-name random \
-            --random-input-len 32768 \
+            --random-input-len 28672 \
             --random-output-len 256 \
             --num-prompts 100 \
             --max-concurrency 4 \
@@ -47,7 +53,7 @@ spec:
 
           echo "==== summary ===="
           ls /results
-          cat /results/*.json | python -c '
+          cat /results/*.json | python3 -c '
           import json,sys
           d=json.load(sys.stdin)
           for k in ("mean_ttft_ms","median_ttft_ms","p99_ttft_ms",
@@ -57,6 +63,8 @@ spec:
               if k in d: print(f"{k}: {d[k]:.2f}")
           '
         volumeMounts:
-        - { name: results, mountPath: /results }
+        - { name: results,     mountPath: /results }
+        - { name: model-cache, mountPath: /models, readOnly: true }
       volumes:
       - { name: results, emptyDir: {} }
+      - { name: model-cache, hostPath: { path: /var/lib/models, type: Directory } }

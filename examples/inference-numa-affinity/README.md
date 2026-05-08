@@ -160,7 +160,7 @@ to bind cross-NUMA NICs and the per-rail saturation to drop accordingly.
 
 - **TTFT** is dominated by prompt prefill on the prefill pod **plus** the
   prefill→decode KV transfer over RDMA. Bigger prompts make the transfer
-  fraction larger; the demo uses 32 k input tokens specifically because
+  fraction larger; the demo uses ~28 k input tokens specifically because
   31B is a small enough model that shorter prompts would put the transfer
   cost in the noise.
 - **TPOT** is steady-state per-token latency on the decode pod, all local —
@@ -168,9 +168,26 @@ to bind cross-NUMA NICs and the per-rail saturation to drop accordingly.
 - **Output throughput** is gated by both, but at modest concurrency
   reflects how much of the fabric the prefill pod can keep saturated.
 
-A measurable TTFT regression in `pd-half-bandwidth` (typically 30-80%
-depending on prompt length and link speed) is the dranet value proposition
-made visible to the application owner.
+### Observed numbers (Azure ND H100 v5, 2 nodes, concurrency 4, 100 reqs)
+
+| Metric | `pd-aligned` (8 NICs) | `pd-half-bandwidth` (4 NICs) | Δ |
+|---|---:|---:|---:|
+| Successful / Failed | 100 / 0 | 100 / 0 | — |
+| Mean TTFT | 2179 ms | 2326 ms | +6.7% |
+| Median TTFT | 2085 ms | 2077 ms | flat |
+| **P99 TTFT** | **5050 ms** | **7044 ms** | **+39.5%** |
+| Mean TPOT | 12.19 ms | 12.18 ms | flat |
+| Output throughput | 191 tok/s | 186 tok/s | −2.6% |
+| Mean E2E | 5286 ms | 5432 ms | +2.8% |
+| **P99 E2E** | **8189 ms** | **10131 ms** | **+23.7%** |
+
+This is a **tail-latency story** at concurrency 4 — median TTFT is
+essentially unchanged because the system doesn't saturate the fabric in the
+typical case, but P99 TTFT swings +40% under contention. Mean / median gaps
+grow with concurrency (try `--max-concurrency 16` or `32` in
+`benchmark-job.yaml` to surface them) and with KV size per token (a model
+like Llama-3.1-405B-FP8 has ~3× the per-token KV of Gemma-4-31B and shows
+the gap in the mean as well as the tail).
 
 ## Notes / caveats
 
