@@ -1,7 +1,7 @@
 # Hits the P/D router with realistic chat-style traffic and prints a
 # TTFT / TPOT / ITL / throughput summary.
 #
-# Re-apply once per ResourceClaimTemplate (`pd-aligned`, `pd-half-bandwidth`)
+# Re-apply once per ResourceClaimTemplate (`pd-4gpu-aligned`, `pd-4gpu-unaligned`)
 # and compare. Long input + short output makes per-request KV transfer the
 # dominant TTFT contributor, which is what NIC bandwidth and NIC<->GPU NUMA
 # placement actually drive.
@@ -23,7 +23,8 @@ spec:
       - name: bench
         image: vllm/vllm-openai:gemma4
         env:
-        - { name: MODEL, value: google/gemma-4-31B-it }
+        - { name: MODEL, value: meta-llama/Llama-3.1-70B-Instruct }
+        - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
         command: ["/bin/bash", "-euxo", "pipefail", "-c"]
         args:
         - |
@@ -34,19 +35,18 @@ spec:
           # 28 k-token prompt drives the prefill -> decode KV transfer hard;
           # 256 output tokens keeps the decode-phase work bounded. Stays under
           # vllm's --max-model-len 32768 with margin for chat-template tokens.
-          # Long input is what makes NIC bandwidth visible in TTFT for a 31B
-          # model.
+          # Long input is what makes NIC bandwidth visible in TTFT.
           vllm bench serve \
-            --backend openai-chat \
+            --backend openai \
             --base-url http://vllm-router:8000 \
-            --endpoint /v1/chat/completions \
+            --endpoint /v1/completions \
             --model "${MODEL}" \
             --tokenizer "/models/${MODEL}" \
             --dataset-name random \
             --random-input-len 28672 \
             --random-output-len 256 \
-            --num-prompts 100 \
-            --max-concurrency 4 \
+            --num-prompts 200 \
+            --max-concurrency 16 \
             --percentile-metrics ttft,tpot,itl,e2el \
             --metric-percentiles 50,90,99 \
             --save-result --result-dir /results

@@ -1,35 +1,34 @@
-# Disaggregated prefill/decode serving of google/gemma-4-31B-it
+# Disaggregated prefill/decode serving of meta-llama/Llama-3.1-70B-Instruct
 # across two GPU nodes connected by an RDMA fabric.
 #
-#   vllm-prefill (node A):  8 GPUs (TP=8), holds full BF16 copy of weights,
+#   vllm-prefill (node A):  4 GPUs (TP=4), holds full BF16 copy of weights,
 #                           handles prompt prefill, exports KV blocks via NIXL.
-#   vllm-decode  (node B):  8 GPUs (TP=8), holds full BF16 copy of weights,
+#   vllm-decode  (node B):  4 GPUs (TP=4), holds full BF16 copy of weights,
 #                           imports KV blocks from prefill, generates tokens.
 #   vllm-router  (CPU):     OpenAI-compatible front door. Forwards each
 #                           request first to prefill (max_tokens=1) to populate
 #                           the KV cache, then streams the decode response.
 #
 # Each vLLM pod claims one ResourceClaim. Edit `resourceClaimTemplateName` on
-# BOTH pods to switch test case (`pd-aligned` vs `pd-half-bandwidth`).
+# BOTH pods to switch test case (`pd-4gpu-aligned` vs `pd-4gpu-unaligned`).
 #
-# 31B at TP=8 leaves the per-GPU weight footprint tiny (~8 GB) -- intentional.
-# We use TP=8 so the per-rank KV slice is sent over a dedicated NIC, exercising
-# all 8 RDMA rails and exposing the NIC-NUMA placement signal in TTFT. Long
-# prompts (--max-model-len 32768) make the prefill->decode KV transfer big
-# enough to dominate TTFT.
+# Llama-3.1-70B at TP=4 puts ~35 GB of weights per GPU, leaving ~45 GB per
+# GPU for KV cache and activations. The two ResourceClaimTemplates pin the
+# 4 GPUs to a specific NUMA node (via pciBusID) and the 4 NICs to either the
+# same NUMA (aligned) or the opposite NUMA (unaligned) -- this isolates the
+# GPU<->NIC NUMA-alignment effect from any compute or bandwidth confound.
 #
 # Prereqs:
-#   - Secret `hf-token` with key `token`. google/gemma-4-31B-it is Apache 2.0
-#     but HF still requires you to accept Google's usage notice once on the
-#     model page (instant approval, no waiting list).
+#   - Secret `hf-token` with key `token` and access to
+#     meta-llama/Llama-3.1-70B-Instruct (gated on HF; accept the license).
 #   - Two GPU nodes labeled identically; the pods land on different nodes via
 #     podAntiAffinity on the shared `app: vllm-pd` label.
 #
 # Model caching: the `model-warmer` DaemonSet (defined first in this file)
-# downloads the model into hostPath /var/lib/models/google/gemma-4-31B-it on
-# each GPU node exactly once. The vllm-prefill / vllm-decode pods mount that
-# hostPath and wait on a `.ready` sentinel before starting `vllm serve`, so
-# pod restarts boot in seconds instead of redownloading 62 GB.
+# downloads the model into hostPath /var/lib/models/meta-llama/Llama-3.1-70B-Instruct
+# on each GPU node exactly once. The vllm-prefill / vllm-decode pods mount
+# that hostPath and wait on a `.ready` sentinel before starting `vllm serve`,
+# so pod restarts boot in 2-3 min instead of redownloading 140 GB.
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -68,11 +67,16 @@ spec:
               os.environ["MODEL"],
               local_dir="/models/" + os.environ["MODEL"],
               max_workers=4,
+              # Some HF repos (e.g. meta-llama/Llama-3.1-70B-Instruct) ship a
+              # duplicate `original/consolidated.NN.pth` checkpoint alongside
+              # the safetensors. vLLM only needs the safetensors. Skipping
+              # `original/` saves ~140 GB and ~15 min on every fresh node.
+              ignore_patterns=["original/*"],
           )
           PY
           touch "${DEST}/.ready"
         env:
-        - { name: MODEL, value: google/gemma-4-31B-it }
+        - { name: MODEL, value: meta-llama/Llama-3.1-70B-Instruct }
         - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
         - { name: HF_HUB_DOWNLOAD_TIMEOUT, value: "300" }
         # The Xet chunked-storage endpoint (xet-read-token) intermittently
@@ -135,7 +139,7 @@ data:
     # advertised model id stable for the benchmark client.
     exec vllm serve "/models/${MODEL}" \
       --served-model-name "${MODEL}" \
-      --tensor-parallel-size 8 \
+      --tensor-parallel-size 4 \
       --gpu-memory-utilization 0.90 \
       --max-model-len 32768 \
       --port 8100 \
@@ -155,7 +159,7 @@ data:
     # advertised model id stable for the benchmark client.
     exec vllm serve "/models/${MODEL}" \
       --served-model-name "${MODEL}" \
-      --tensor-parallel-size 8 \
+      --tensor-parallel-size 4 \
       --gpu-memory-utilization 0.90 \
       --max-model-len 32768 \
       --port 8200 \
@@ -288,7 +292,7 @@ spec:
   restartPolicy: Never
   resourceClaims:
   - name: devices
-    resourceClaimTemplateName: pd-aligned   # EDIT to switch test case
+    resourceClaimTemplateName: pd-4gpu-aligned   # EDIT to switch test case
   affinity:
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -302,7 +306,7 @@ spec:
     command: ["/bin/sh","-c"]
     args:
     - |
-      until [ -f /models/google/gemma-4-31B-it/.ready ]; do
+      until [ -f /models/meta-llama/Llama-3.1-70B-Instruct/.ready ]; do
         echo "waiting for model-warmer DaemonSet to finish on this node..."
         sleep 15
       done
@@ -314,7 +318,7 @@ spec:
     image: vllm/vllm-openai:gemma4
     command: ["/bin/bash", "/scripts/prefill.sh"]
     env:
-    - { name: MODEL,    value: google/gemma-4-31B-it }
+    - { name: MODEL,    value: meta-llama/Llama-3.1-70B-Instruct }
     # No HF_TOKEN here — weights are already on disk via the model-warmer DS.
     - { name: NCCL_IB_HCA,         value: "mlx5" }
     - { name: NCCL_IB_DATA_DIRECT, value: "0" }
@@ -349,7 +353,7 @@ spec:
   restartPolicy: Never
   resourceClaims:
   - name: devices
-    resourceClaimTemplateName: pd-aligned   # EDIT to switch test case
+    resourceClaimTemplateName: pd-4gpu-aligned   # EDIT to switch test case
   affinity:
     podAntiAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -363,7 +367,7 @@ spec:
     command: ["/bin/sh","-c"]
     args:
     - |
-      until [ -f /models/google/gemma-4-31B-it/.ready ]; do
+      until [ -f /models/meta-llama/Llama-3.1-70B-Instruct/.ready ]; do
         echo "waiting for model-warmer DaemonSet to finish on this node..."
         sleep 15
       done
@@ -375,7 +379,7 @@ spec:
     image: vllm/vllm-openai:gemma4
     command: ["/bin/bash", "/scripts/decode.sh"]
     env:
-    - { name: MODEL,    value: google/gemma-4-31B-it }
+    - { name: MODEL,    value: meta-llama/Llama-3.1-70B-Instruct }
     # No HF_TOKEN here — weights are already on disk via the model-warmer DS.
     - { name: NCCL_IB_HCA,         value: "mlx5" }
     - { name: NCCL_IB_DATA_DIRECT, value: "0" }

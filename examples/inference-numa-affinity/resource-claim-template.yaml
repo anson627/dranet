@@ -1,34 +1,29 @@
-# Two ResourceClaimTemplates that allocate a *full node's worth* of devices to
-# a single pod for prefill/decode-disaggregated vLLM serving.
+# Two ResourceClaimTemplates that isolate the GPU<->NIC NUMA-alignment
+# effect at fixed compute and fixed bandwidth.
 #
-# Topology assumed (e.g. Azure ND H100 v5: 8 x H100 80GB, 8 x ConnectX VFs):
-#   - 8 GPUs per node, split 4 + 4 across NUMA 0 / NUMA 1
-#   - 8 RDMA NICs per node, split 4 + 4 across NUMA 0 / NUMA 1
+# Both claim 4 GPUs + 4 NICs. The 4 NICs are always on NUMA 0. The
+# difference is which NUMA the 4 GPUs sit on:
 #
-# The interesting demo question: does the *NIC selection* sent to vLLM matter
-# for prefill -> decode KV cache transfer over RDMA? Two templates make the
-# answer measurable in TTFT / TPOT:
+#   pd-4gpu-aligned    : 4 GPUs on NUMA 0  -> every GPU has a same-NUMA NIC
+#   pd-4gpu-unaligned  : 4 GPUs on NUMA 1  -> every GPU must reach a NIC on
+#                                             the other NUMA, every rail is
+#                                             cross-socket DMA
 #
-#   pd-aligned         : 8 GPUs + 8 NICs (4 NUMA 0 + 4 NUMA 1).
-#                        Every GPU has a same-NUMA NIC -> NIXL/UCX uses
-#                        GPUDirect RDMA on every rail, full fabric bandwidth.
+# Topology assumed (Azure ND H100 v5):
+#   - GPUs:  pciBusID 0001/0002/0003/0008:00:00.0 on NUMA 0,
+#            pciBusID 0009/000a/000b/000c:00:00.0 on NUMA 1.
+#   - NICs:  4 RDMA NICs per NUMA node (8 total), exposed by dranet.
 #
-#   pd-half-bandwidth  : 8 GPUs + 4 NICs (NUMA 0 only).
-#                        4 GPUs on NUMA 1 must reach NICs on NUMA 0 ->
-#                        cross-socket DMA, half the aggregate RDMA bandwidth.
-#                        This is what you get from a scheduler that picks
-#                        any free NICs without joint GPU/NIC NUMA awareness.
-#
-# Why two requests in pd-aligned (not one with count: 8)?
-#   The dra.net/numaNode attribute lets us *prove* a balanced layout. A single
-#   `count: 8` request with no NUMA selector would still allocate all 8 NICs
-#   on this SKU (only 8 exist), but DRA can't enforce the 4+4 split if more
-#   NICs were ever present. Splitting the request makes the contract explicit.
+# Why pin GPUs by pciBusID (not numaNode)? The NVIDIA k8s-dra-driver-gpu
+# does not publish a numaNode attribute, and on Azure ND H100 v5 it cannot
+# publish pcieRoot either (each GPU is behind a Hyper-V VMBus path that the
+# resolver rejects). Until the GPU driver publishes a standard numaNode
+# attribute, NUMA-aware GPU selection has to go through pciBusID.
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: pd-aligned
+  name: pd-4gpu-aligned
 spec:
   spec:
     devices:
@@ -36,26 +31,23 @@ spec:
       - name: gpus
         exactly:
           deviceClassName: gpu.nvidia.com
-          count: 8
-      - name: nics-numa0
+          count: 4
+          selectors:
+          - cel:
+              # EDIT: pciBusIDs of 4 GPUs on NUMA 0 on your node.
+              expression: 'device.attributes["resource.kubernetes.io"]["pciBusID"] in ["0001:00:00.0","0002:00:00.0","0003:00:00.0","0008:00:00.0"]'
+      - name: nics
         exactly:
           deviceClassName: dra.net
           count: 4
           selectors:
           - cel:
               expression: 'device.attributes["dra.net"]["rdma"] == true && device.attributes["dra.net"]["numaNode"] == 0'
-      - name: nics-numa1
-        exactly:
-          deviceClassName: dra.net
-          count: 4
-          selectors:
-          - cel:
-              expression: 'device.attributes["dra.net"]["rdma"] == true && device.attributes["dra.net"]["numaNode"] == 1'
 ---
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaimTemplate
 metadata:
-  name: pd-half-bandwidth
+  name: pd-4gpu-unaligned
 spec:
   spec:
     devices:
@@ -63,8 +55,12 @@ spec:
       - name: gpus
         exactly:
           deviceClassName: gpu.nvidia.com
-          count: 8
-      - name: nics-numa0-only
+          count: 4
+          selectors:
+          - cel:
+              # EDIT: pciBusIDs of 4 GPUs on NUMA 1 on your node.
+              expression: 'device.attributes["resource.kubernetes.io"]["pciBusID"] in ["0009:00:00.0","000a:00:00.0","000b:00:00.0","000c:00:00.0"]'
+      - name: nics
         exactly:
           deviceClassName: dra.net
           count: 4
