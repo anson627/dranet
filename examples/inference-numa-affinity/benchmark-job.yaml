@@ -23,7 +23,7 @@ spec:
       - name: bench
         image: vllm/vllm-openai:gemma4
         env:
-        - { name: MODEL, value: meta-llama/Llama-3.1-70B-Instruct }
+        - { name: MODEL, value: google/gemma-3-4b-it }
         - { name: HF_TOKEN, valueFrom: { secretKeyRef: { name: hf-token, key: token } } }
         command: ["/bin/bash", "-euxo", "pipefail", "-c"]
         args:
@@ -33,9 +33,9 @@ spec:
           done
 
           # 28 k-token prompt drives the prefill -> decode KV transfer hard;
-          # 256 output tokens keeps the decode-phase work bounded. Stays under
-          # vllm's --max-model-len 32768 with margin for chat-template tokens.
-          # Long input is what makes NIC bandwidth visible in TTFT.
+          # 64 output tokens keeps decode-phase work bounded. Stays under
+          # vllm's --max-model-len 32768. Long input and higher concurrency
+          # make handoff and NIC bandwidth visible in TTFT.
           vllm bench serve \
             --backend openai \
             --base-url http://vllm-router:8000 \
@@ -44,9 +44,9 @@ spec:
             --tokenizer "/models/${MODEL}" \
             --dataset-name random \
             --random-input-len 28672 \
-            --random-output-len 256 \
-            --num-prompts 200 \
-            --max-concurrency 16 \
+            --random-output-len 64 \
+            --num-prompts 300 \
+            --max-concurrency 32 \
             --percentile-metrics ttft,tpot,itl,e2el \
             --metric-percentiles 50,90,99 \
             --save-result --result-dir /results
