@@ -41,8 +41,9 @@ the workload actually used.
 ## Goals
 
 - Define a common validation contract for AKS and CKS.
-- Reuse the same workload structure and DRA allocation pattern where possible.
-- Document the exact provider-specific overlays and why each is necessary.
+- Reuse existing provider examples while preserving their documented usage.
+- Identify common workload intent and DRA allocation patterns where possible.
+- Document provider-specific configuration and why each difference is necessary.
 - Collect evidence from scheduling, device allocation, and workload runtime.
 - Detect invalid fabric placement before starting an expensive benchmark.
 - Emit machine-readable results alongside human-readable reports.
@@ -56,6 +57,8 @@ the workload actually used.
 - Establishing a general performance guarantee from a small number of runs.
 - Hiding provider-specific topology behind a premature common vocabulary.
 - Replacing provider qualification, burn-in, or large-scale performance tests.
+- Requiring a shared Kustomize base or migrating existing example workflows.
+- Requiring contributors to adopt `dranetctl` to perform the validation.
 
 ## Portability hypothesis
 
@@ -67,36 +70,16 @@ The initial hypothesis is:
 
 The validation must be capable of disproving or refining this hypothesis.
 
-## Proposed repository structure
+## Existing example compatibility
 
-The first implementation can use the following structure:
+The website links to provider example directories and documents commands such
+as `kubectl apply -f resource-claim-template.yaml` and
+`kubectl apply -f mpi-job.yaml`. These examples remain the canonical runnable
+manifests. The initial implementation must preserve their paths and documented
+apply commands; it must not replace standalone manifests with patches that
+require rendering before use.
 
-```text
-examples/cross-cloud-validation/
-|-- README.md
-|-- base/
-|   |-- mpi-job.yaml
-|   `-- kustomization.yaml
-|-- overlays/
-|   |-- aks/
-|   |   |-- device-class.yaml
-|   |   |-- resource-claim-template.yaml
-|   |   `-- kustomization.yaml
-|   `-- cks/
-|       |-- device-class.yaml
-|       |-- resource-claim-template.yaml
-|       `-- kustomization.yaml
-|-- scripts/
-|   |-- preflight.sh
-|   |-- validate-allocation.sh
-|   `-- collect-results.sh
-|-- result-schema.json
-`-- results/
-    |-- aks-gb300.md
-    `-- cks-b200.md
-```
-
-The implementation should reuse or reference the existing examples instead of
+The validation workflow should reuse or reference these examples instead of
 duplicating them:
 
 - `examples/azure_aks_examples/gb300/`
@@ -104,15 +87,76 @@ duplicating them:
 - `examples/distributed_training/`
 - `examples/nixl-kv-transfer/`
 
+Kustomize can remain an optional, additive convenience for the provider
+examples. Existing Kustomize workflows, such as distributed training and NIXL
+KV transfer, remain supported. Extracting a shared base is deferred until
+validation establishes which workload content is actually common and the
+effect on website examples can be reviewed separately.
+
+The initial common boundary is the evidence and result contract, not a required
+manifest layout. For example, the current AKS GB300 MPIJob uses a combined GPU
+and NIC DRA claim, while the CKS B200 MPIJob uses a DRA NIC claim and
+`nvidia.com/gpu` resource limits. Reports must capture this difference rather
+than assume a common GPU allocation mechanism.
+
+## Validation implementation and CLI
+
+Substantive validation logic should live in a tested Go package: topology
+checks, Kubernetes object relationships, allocated-to-visible device matching,
+runtime evidence parsing, and structured result generation. Bash, if needed,
+should be limited to simple command orchestration rather than implementing
+these rules or assembling results through text processing.
+
+The package should separate evidence collection from checks so that recorded
+AKS and CKS fixtures can exercise the same validation logic in CI without
+requiring GPU clusters. Reuse provider attribute definitions where appropriate,
+without requiring the validator to initialize node-local device discovery.
+
+An optional `dranetctl validate` command is a candidate interface to this
+package. The current CLI exposes GKE management commands and shares the
+repository's Go module, build targets, and Go test target. That provides a
+starting point, but does not establish cross-cloud validation support or user
+adoption. Before recommending the command, verify its build and test coverage,
+document supported Kubernetes/DRA versions, and provide a reproducible way to
+build or install it from the revision used for validation.
+
+The initial CLI scope, if implemented, is to inspect workloads deployed by the
+contributor and produce validation results. It should not require the GKE
+provisioning workflow. The documented workflow must also explain how to collect
+and evaluate the required evidence with `kubectl` and workload logs, and how to
+record results against the same schema. CLI adoption is not an acceptance
+criterion, and completing the initial reports must not depend on a broader
+`dranetctl` modernization effort.
+
+## Proposed repository structure
+
+The first implementation can use the following structure, while leaving the
+existing provider manifests in place:
+
+```text
+examples/cross-cloud-validation/
+|-- README.md
+|-- result-schema.json
+`-- results/
+    |-- aks-gb300.md
+    `-- cks-b200.md
+
+internal/validation/
+|-- ... Go collection and validation code with tests
+`-- testdata/
+    |-- aks/
+    `-- cks/
+```
+
 The exact directory layout can change during review. The important boundary is
-between a provider-neutral workload, provider overlays, common validation
-scripts, and captured results.
+between existing runnable examples, reusable validation logic, an optional CLI
+interface, and captured results.
 
 ## Expected portability boundary
 
 | Layer | Expected to be portable | Expected to remain provider-specific |
 |---|---|---|
-| Workload | MPIJob shape, NCCL command, GPU and NIC claim pattern | Container images and platform tuning |
+| Workload | MPIJob structure, NCCL workload intent, NIC claim pattern | GPU allocation mechanism, container images, and platform tuning |
 | Kubernetes API | DeviceClass, ResourceClaimTemplate, ResourceSlice, CEL selector mechanisms | Driver names, attribute domains, and selector values |
 | Device allocation | DRA claim lifecycle and allocation evidence | GPU driver and NIC discovery implementation |
 | Local topology | PCIe and NUMA relationship pattern | Available attributes and platform topology |
@@ -142,8 +186,9 @@ sensitive values must be removed before results are committed.
 
 ### 2. Run topology preflight checks
 
-Before the benchmark begins, `preflight.sh` verifies that the selected workers
-meet the required provider topology constraints.
+Before the benchmark begins, the workflow verifies that the selected workers
+meet the required provider topology constraints. The documented manual checks
+and any Go implementation must use the same provider-specific requirements.
 
 Example failure output:
 
@@ -246,7 +291,8 @@ the initial two environments.
 The initial work is complete when:
 
 1. A contributor can follow one documented workflow on either AKS or CKS.
-2. Provider-neutral workload content is clearly separated from overlays.
+2. Existing example paths and documented apply commands remain compatible;
+   reports identify common workload intent and provider-specific configuration.
 3. Preflight reports whether the selected nodes satisfy fabric constraints.
 4. Allocation evidence connects a ResourceClaim to the device visible in the
    workload.
@@ -255,29 +301,40 @@ The initial work is complete when:
 7. At least one AKS and one CKS report document the environment, commands,
    observations, limitations, and portability differences.
 8. Committed artifacts contain no credentials or sensitive cluster data.
+9. Validation logic has tests using AKS and CKS fixtures, including topology
+   mismatch, missing evidence, allocation mismatch, and socket fallback cases.
+10. The workflow can be completed without installing `dranetctl` or converting
+    existing provider examples to Kustomize.
 
 ## Proposed implementation sequence
 
 To keep reviews focused, the work should be split into small pull requests:
 
-1. Add the result schema, collection contract, and workflow documentation.
-2. Add the preflight and allocation-validation scripts.
+1. Add the result schema, collection contract, and a manual workflow referencing
+   the existing examples. Check that website links and apply commands remain
+   valid, and validate sample results against the schema in CI.
+2. Add reusable Go collection and validation logic with AKS and CKS fixtures.
+   If useful to initial contributors, expose it through a small optional
+   `dranetctl validate` command with build/test coverage and installation
+   instructions; the command is not a prerequisite for the reports.
 3. Add a repeatable CKS B200 result.
 4. Add a repeatable AKS GB300 result and the cross-environment comparison.
 
 Later work may add the NIXL KV-cache benchmark, additional clouds, richer
-accelerator-to-NIC affinity checks, or automated CI with simulated devices.
+accelerator-to-NIC affinity checks, optional shared manifest composition, or
+automated CI with simulated devices. Broader CLI investment should follow
+maintainer ownership and demonstrated contributor use.
 
 ## Open questions
 
-- Should the common workload be based first on `nccl-tests`, the existing
+- Should the initial validation cover `nccl-tests`, the existing
   PyTorch MFU workload, or both?
 - Should provider-specific attributes be stored in a free-form result section
   or normalized into an experimental topology vocabulary?
 - Which evidence is safe and useful to commit from production-shaped clusters?
 - Can the preflight reuse a library shared with DRANET device discovery?
-- Should the result schema be validated in CI before adding execution
-  automation?
+- Who will own the optional `dranetctl validate` interface, its compatibility
+  coverage, and distribution, and would the initial contributors use it?
 - How should a test represent an allocation that is valid locally but lacks a
   schedulable end-to-end fabric constraint?
 
